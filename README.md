@@ -12,7 +12,7 @@ It includes:
 
 - Ubuntu 22.04
 - ROS 2 Humble
-- Gazebo Classic (Gazebo 11) with `gazebo_ros`
+- Gazebo installed through ROS default pairing (`ros_gz`)
 
 ## 1) Install ROS 2 Humble
 
@@ -33,14 +33,32 @@ echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-## 2) Install Gazebo and ROS integration
+## 2) Install Gazebo (default ROS pairing)
 
-Install Gazebo Classic and commonly needed ROS 2 simulation/control packages:
+If you are using a specific ROS distribution and do not need a specific Gazebo version, install the default Gazebo/ROS pairing from ROS packages.
+
+Official Gazebo docs:
+
+- https://gazebosim.org/docs/latest/
+- https://gazebosim.org/docs/latest/ros_installation/
+
+Install command (replace `${ROS_DISTRO}` with your distro, for example `humble`):
 
 ```bash
 sudo apt update
+sudo apt-get install ros-${ROS_DISTRO}-ros-gz
+```
+
+For ROS 2 Humble specifically:
+
+```bash
+sudo apt-get install ros-humble-ros-gz
+```
+
+Then install the remaining project dependencies:
+
+```bash
 sudo apt install -y \
-	gazebo \
 	ros-humble-gazebo-ros-pkgs \
 	ros-humble-ros2-control \
 	ros-humble-ros2-controllers \
@@ -69,7 +87,7 @@ git clone <YOUR-REPO-URL> 3D-Bipedal-Walking
 If your workspace root is this repository, enter it:
 
 ```bash
-cd 3D-Bipedal-Walking/3D-Bipedal-Walking-WS
+cd 3D-Bipedal-Walking/3D-Bipedal-Walking
 ```
 
 Install package dependencies from `src`:
@@ -80,7 +98,7 @@ rosdep install --from-paths src --ignore-src -r -y
 
 ## 4) Build the workspace
 
-From workspace root (`3D-Bipedal-Walking-WS`):
+From workspace root (`3D-Bipedal-Walking`):
 
 ```bash
 colcon build --symlink-install
@@ -101,13 +119,6 @@ Start the full simulation stack (Gazebo + robot spawn + controllers + RViz + con
 
 ```bash
 ros2 launch humanoid_description spawn_humanoid.launch.py
-```
-
-Useful launch arguments:
-
-```bash
-ros2 launch humanoid_description spawn_humanoid.launch.py pause:=false
-ros2 launch humanoid_description spawn_humanoid.launch.py use_sim_time:=true
 ```
 
 Run URDF/RViz-only visualization (without Gazebo):
@@ -162,7 +173,7 @@ Control and visualization nodes for startup and walking behavior.
 For every new terminal:
 
 ```bash
-cd /path/to/3D-Bipedal-Walking/3D-Bipedal-Walking-WS
+cd /path/to/3D-Bipedal-Walking
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ```
