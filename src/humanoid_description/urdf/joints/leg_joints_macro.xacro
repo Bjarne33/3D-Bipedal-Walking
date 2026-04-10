@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="leg_joints_macro" params="side prefix x_offset">
+    <joint name="${prefix}hip_roll" type="revolute">
+      <parent link="torso_link"/>
+      <child link="${prefix}hip_yaw_link"/>
+      <origin xyz="${x_offset} 0.0 ${hip_roll_origin_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="${hip_roll_limit_lower}" upper="${hip_roll_limit_upper}" effort="${hip_roll_limit_effort}" velocity="${leg_joint_limit_velocity}"/>
+      <dynamics damping="1" friction="0.1"/>
+    </joint>
+
+    <joint name="${prefix}hip_yaw" type="revolute">
+      <parent link="${prefix}hip_yaw_link"/>
+      <child link="${prefix}hip_pitch_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${hip_yaw_limit_lower}" upper="${hip_yaw_limit_upper}" effort="${hip_yaw_limit_effort}" velocity="${leg_joint_limit_velocity}"/>
+      <dynamics damping="1" friction="0.1"/>
+    </joint>
+
+    <joint name="${prefix}hip_pitch" type="revolute">
+      <parent link="${prefix}hip_pitch_link"/>
+      <child link="${prefix}thigh_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="${hip_pitch_limit_lower}" upper="${hip_pitch_limit_upper}" effort="${hip_pitch_limit_effort}" velocity="${leg_joint_limit_velocity}"/>
+      <dynamics damping="1" friction="0.1"/>
+    </joint>
+
+    <joint name="${prefix}knee" type="revolute">
+      <parent link="${prefix}thigh_link"/>
+      <child link="${prefix}shank_link"/>
+      <origin xyz="0 0 ${knee_origin_z}" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="${knee_pitch_limit_lower}" upper="${knee_pitch_limit_upper}" effort="${knee_pitch_limit_effort}" velocity="${leg_joint_limit_velocity}"/>
+      <dynamics damping="1" friction="0.1"/>
+    </joint>
+
+    <joint name="${prefix}ankle_roll" type="revolute">
+      <parent link="${prefix}shank_link"/>
+      <child link="${prefix}ankle_link"/>
+      <origin xyz="0 0 ${ankle_roll_origin_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="${ankle_roll_limit_lower}" upper="${ankle_roll_limit_upper}" effort="${ankle_roll_limit_effort}" velocity="${leg_joint_limit_velocity}"/>
+      <dynamics damping="1" friction="0.1"/>
+    </joint>
+
+    <joint name="${prefix}ankle_pitch" type="revolute">
+      <parent link="${prefix}ankle_link"/>
+      <child link="${prefix}foot_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="${ankle_pitch_limit_lower}" upper="${ankle_pitch_limit_upper}" effort="${ankle_pitch_limit_effort}" velocity="${leg_joint_limit_velocity}"/>
+      <dynamics damping="1" friction="0.1"/>
+    </joint>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="leg_macro" params="side prefix">
+
+    <link name="${prefix}hip_yaw_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${hip_yaw_mass}"/>
+        <inertia ixx="${dummy_link_inertia}" ixy="0.0" ixz="0.0" iyy="${dummy_link_inertia}" iyz="0.0" izz="${dummy_link_inertia}"/>
+      </inertial>
+    </link>
+
+    <link name="${prefix}hip_pitch_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${hip_pitch_mass}"/>
+        <inertia ixx="${dummy_link_inertia}" ixy="0.0" ixz="0.0" iyy="${dummy_link_inertia}" iyz="0.0" izz="${dummy_link_inertia}"/>
+      </inertial>
+    </link>
+
+    <link name="${prefix}thigh_link">
+      <inertial>
+        <origin xyz="0 0 ${-thigh_length/2}" rpy="0 0 0"/>
+        <mass value="${thigh_mass}"/>
+        <xacro:cylinder_inertia mass="${thigh_mass}" radius="${thigh_radius}" length="${thigh_length}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${-thigh_length/2}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${thigh_radius}" length="${thigh_length}"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${-thigh_length/2}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${thigh_radius}" length="${thigh_length}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="${prefix}shank_link">
+      <inertial>
+        <origin xyz="0 0 ${-shin_length/2}" rpy="0 0 0"/>
+        <mass value="${shank_mass}"/>
+        <xacro:cylinder_inertia mass="${shank_mass}" radius="${shin_radius}" length="${shin_length}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${-shin_length/2}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${shin_radius}" length="${shin_length}"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${-shin_length/2}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${shin_radius}" length="${shin_length}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="${prefix}ankle_link">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${ankle_mass}"/>
+        <inertia ixx="${dummy_link_inertia}" ixy="0.0" ixz="0.0" iyy="${dummy_link_inertia}" iyz="0.0" izz="${dummy_link_inertia}"/>
+      </inertial>
+    </link>
+
+    <link name="${prefix}foot_link">
+      <inertial>
+        <origin xyz="0 0.05 ${-foot_z/2}" rpy="0 0 0"/>
+        <mass value="${foot_mass}"/>
+        <xacro:box_inertia mass="${foot_mass}" x="${foot_x}" y="${foot_y}" z="${foot_z}"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0.05 ${-foot_z/2}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${foot_x} ${foot_y} ${foot_z}"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0.05 ${-foot_z/2}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${foot_x} ${foot_y} ${foot_z}"/>
+        </geometry>
+      </collision>
+    </link>
+
+  </xacro:macro>
+
+</robot>

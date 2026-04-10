@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<robot name="humanoid" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find humanoid_description)/urdf/properties.xacro"/>
+  <xacro:include filename="$(find humanoid_description)/urdf/inertia.xacro"/>
+  <xacro:include filename="$(find humanoid_description)/urdf/links/torso.xacro"/>
+  <xacro:include filename="$(find humanoid_description)/urdf/links/leg_macro.xacro"/>
+  <xacro:include filename="$(find humanoid_description)/urdf/joints/leg_joints_macro.xacro"/>
+  <xacro:include filename="$(find humanoid_description)/urdf/transmissions/leg_transmissions_macro.xacro"/>
+  <xacro:include filename="$(find humanoid_description)/urdf/ros2_control.xacro"/>
+
+  <link name="base" />
+  <joint name="base_to_torso" type="fixed">
+    <origin xyz="0 0 1.1" rpy="0 0 0" />
+    <parent link="base" />
+    <child link="torso_link" />
+  </joint>
+  <xacro:torso_macro/>
+
+  <xacro:leg_macro side="left" prefix="left_"/>
+  <xacro:leg_joints_macro side="left" prefix="left_" x_offset="${hip_x_offset}"/>
+  <xacro:leg_transmissions_macro prefix="left_"/>
+
+  <xacro:leg_macro side="right" prefix="right_"/>
+  <xacro:leg_joints_macro side="right" prefix="right_" x_offset="${-hip_x_offset}"/>
+  <xacro:leg_transmissions_macro prefix="right_"/>
+
+  <xacro:humanoid_ros2_control/>
+
+  <gazebo reference="left_foot_link">
+    <mu1>2.5</mu1>
+    <mu2>2.5</mu2>
+    <kp>500000.0</kp>
+    <kd>10.0</kd>
+  </gazebo>
+
+  <gazebo reference="right_foot_link">
+    <mu1>2.5</mu1>
+    <mu2>2.5</mu2>
+    <kp>500000.0</kp>
+    <kd>10.0</kd>
+  </gazebo>
+
+  <gazebo>
+    <!-- Joint state publisher -->
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <parameters>$(find humanoid_description)/config/ros2_control_controllers.yaml</parameters>
+    </plugin>
+    <plugin name="base_ground_truth" filename="libgazebo_ros_p3d.so">
+      <ros>
+        <namespace>/</namespace>
+      </ros>
+      <body_name>base</body_name>
+      <frame_name>world</frame_name>
+      <update_rate>100.0</update_rate>
+    </plugin>
+
+  </gazebo>
+
+</robot>
