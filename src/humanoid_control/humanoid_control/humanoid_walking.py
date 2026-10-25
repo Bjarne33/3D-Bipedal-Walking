@@ -1,13 +1,19 @@
 import math
+import os
 from enum import Enum
 from typing import Dict, List
 
+import numpy as np
+import pinocchio as pin
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+from humanoid_control.humanoid_kinematics import HumanoidKinematics
 
 
 class StepPhase(Enum):
@@ -45,6 +51,15 @@ class HumanoidWalking(Node):
         self.declare_parameter('place_hip_pitch_delta', 0.22)
         self.declare_parameter('place_knee_delta', -0.08)
         self.declare_parameter('place_ankle_pitch_delta', -0.08)
+
+        # Inverse kinematics test (/humanoid_walking/test_ik)
+        self.declare_parameter('ik_test_swing_offset', [0.05, 0.0, 0.04])
+        self.declare_parameter('ik_test_com_offset', [0.0, 0.03, 0.0])
+        self.declare_parameter('ik_test_iterations', 100)
+        self.declare_parameter('ik_test_dt', 0.02)
+        self.declare_parameter('ik_test_tolerance', 1e-3)
+        self.declare_parameter('ik_test_execute', True)
+        self.declare_parameter('ik_test_duration_sec', 3.0)
 
         self.controller_name = str(self.get_parameter('controller_name').value)
         self.pose_tolerance = float(self.get_parameter('pose_tolerance').value)
@@ -116,6 +131,14 @@ class HumanoidWalking(Node):
             '/humanoid_walking/step_once',
             self.step_once_callback,
         )
+        self.kinematics = HumanoidKinematics.from_xacro(
+            os.path.join(get_package_share_directory('humanoid_description'), 'urdf', 'humanoid.xacro')
+        )
+        self.ik_service = self.create_service(
+            Trigger,
+            '/humanoid_walking/test_ik',
+            self.test_ik_callback,
+        )
         self.timer = self.create_timer(1.0 / max(self.update_rate_hz, 1.0), self.update)
 
         self.get_logger().info(
@@ -149,6 +172,88 @@ class HumanoidWalking(Node):
             'Test step started '
             '(shift-left support -> swing right foot -> place right foot -> centered settle)'
         )
+        self.get_logger().info(response.message)
+        return response
+
+    def test_ik_callback(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        """Check IK: left foot stays put, right foot and CoM move by the configured offsets."""
+        if not self.have_all_joints():
+            response.success = False
+            response.message = 'Joint states incomplete, cannot run IK test'
+            return response
+
+        iterations = int(self.get_parameter('ik_test_iterations').value)
+        dt = float(self.get_parameter('ik_test_dt').value)
+        tolerance = float(self.get_parameter('ik_test_tolerance').value)
+        swing_offset = np.array(self.get_parameter('ik_test_swing_offset').value, dtype=float)
+        com_offset = np.array(self.get_parameter('ik_test_com_offset').value, dtype=float)
+        if swing_offset.shape != (3,) or com_offset.shape != (3,):
+            response.success = False
+            response.message = 'ik_test_swing_offset and ik_test_com_offset need 3 values'
+            return response
+
+        kin = self.kinematics
+        # FK is computed in the base frame: floating base stays at identity, joints from /joint_states.
+        kin.q = pin.neutral(kin.model)
+        kin.set_joint_positions(self.current_joint_positions.keys(), self.current_joint_positions.values())
+        kin.reset_ik()
+        start = kin.compute()
+
+        stance_frame = kin.foot_frames['left']
+        swing_frame = kin.foot_frames['right']
+        stance_pose = pin.SE3(start.feet['left'].rotation, start.feet['left'].position)
+        swing_pose = pin.SE3(start.feet['right'].rotation, start.feet['right'].position + swing_offset)
+        com_target = start.com + com_offset
+
+        try:
+            for _ in range(iterations):
+                kin.compute_ik_step(stance_frame, stance_pose, swing_frame, swing_pose, com_target, dt)
+        except ValueError as exc:
+            response.success = False
+            response.message = f'IK test failed: {exc}'
+            return response
+
+        result = kin.compute()
+        stance_err = float(np.linalg.norm(result.feet['left'].position - stance_pose.translation))
+        swing_err = float(np.linalg.norm(result.feet['right'].position - swing_pose.translation))
+        com_err = float(np.linalg.norm(result.com - com_target))
+        # Rotation error of the swing foot (angle of the relative rotation).
+        rot_err = float(np.linalg.norm(pin.log3(swing_pose.rotation.T @ result.feet['right'].rotation)))
+
+        q = kin.configuration.q
+        joint_deltas = {
+            name: float(q[kin.model.idx_qs[kin.joint_name_to_id[name]]] - self.current_joint_positions[name])
+            for name in self.joint_names
+        }
+        lower, upper = kin.model.lowerPositionLimit, kin.model.upperPositionLimit
+        limit_violations = [
+            name for name in self.joint_names
+            if not lower[kin.model.idx_qs[kin.joint_name_to_id[name]]] - 1e-6
+            <= q[kin.model.idx_qs[kin.joint_name_to_id[name]]]
+            <= upper[kin.model.idx_qs[kin.joint_name_to_id[name]]] + 1e-6
+        ]
+
+        ok = max(stance_err, swing_err, com_err, rot_err) < tolerance
+        lines = [
+            f'IK test {"PASSED" if ok else "FAILED"} ({iterations} steps, dt={dt}, solver={kin.ik_solver})',
+            f'errors [m/rad]: stance_pos={stance_err:.2e} swing_pos={swing_err:.2e} '
+            f'swing_rot={rot_err:.2e} com={com_err:.2e} (tol {tolerance:.1e})',
+            'joint deltas [rad]: ' + ', '.join(f'{n}={d:+.3f}' for n, d in joint_deltas.items()),
+        ]
+        if limit_violations:
+            ok = False
+            lines.append(f'joint limit violations: {limit_violations}')
+
+        if ok and bool(self.get_parameter('ik_test_execute').value):
+            if self.phase != StepPhase.IDLE:
+                lines.append('not executed: step running')
+            else:
+                target = {name: float(q[kin.model.idx_qs[kin.joint_name_to_id[name]]]) for name in self.joint_names}
+                self.publish_pose(target, float(self.get_parameter('ik_test_duration_sec').value))
+                lines.append('IK solution sent to controller')
+
+        response.success = ok
+        response.message = '\n'.join(lines)
         self.get_logger().info(response.message)
         return response
 

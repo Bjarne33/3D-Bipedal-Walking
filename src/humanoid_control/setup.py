@@ -10,6 +10,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/config', ['config/gait.yaml']),
+        ('share/' + package_name + '/launch', ['launch/walk.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,6 +25,7 @@ setup(
             'humanoid_startup = humanoid_control.humanoid_startup:main',
             'com_visualizer = humanoid_control.com_visualizer:main',
             'humanoid_walking = humanoid_control.humanoid_walking:main',
+            'humanoid_walk = humanoid_control.humanoid_walk:main',
         ],
     },
 )

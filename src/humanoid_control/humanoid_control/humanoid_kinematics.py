@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Dict, Mapping, Optional
 
 import numpy as np
+import pink
 import pinocchio as pin
+from pink.tasks import ComTask, FrameTask, PostureTask
 
 
 @dataclass
@@ -37,10 +39,21 @@ def expand_xacro_to_urdf(xacro_path: str) -> str:
 class HumanoidKinematics:
     """Loads the robot URDF via Pinocchio and provides kinematics.
 
-    Currently implements forward kinematics (CoM and foot poses). Inverse
-    kinematics is expected to be added later and can reuse `self.model`,
-    `self.data`, `self.q` and `self.foot_frame_ids`.
+    Provides forward kinematics (CoM and foot poses) and differential inverse
+    kinematics (multi-task, solved with Pink) for walking control.
     """
+
+    # Task costs: feet dominate, CoM is next, posture only regularizes.
+    FOOT_POSITION_COST = 100.0
+    FOOT_ORIENTATION_COST = 50.0
+    COM_COST = 10.0
+    POSTURE_COST = 1e-3
+    # Levenberg-Marquardt damping keeps the solution bounded near singularities.
+    LM_DAMPING = 1e-2
+    # Solvers tried in order; the first one available in qpsolvers is used.
+    SOLVER_PREFERENCE = ("osqp", "quadprog", "clarabel", "cvxopt")
+    # Largest joint velocity norm accepted from the solver [rad/s or m/s].
+    MAX_VELOCITY = 20.0
 
     DEFAULT_FOOT_FRAMES = {"left": "left_foot_link", "right": "right_foot_link"}
 
@@ -58,6 +71,8 @@ class HumanoidKinematics:
             if not self.model.existFrame(frame):
                 raise ValueError(f"Foot frame '{frame}' ({side}) not found in {urdf_path}")
             self.foot_frame_ids[side] = self.model.getFrameId(frame)
+
+        self._init_ik()
 
     @classmethod
     def from_xacro(cls, xacro_path: str, foot_frames: Optional[Mapping[str, str]] = None):
@@ -105,3 +120,113 @@ class HumanoidKinematics:
             (self.model.names[jid], self.data.oMi[jid].act(self.model.inertias[jid].lever))
             for jid in range(1, self.model.njoints)
         ]
+
+    # ------------------------------------------------------------------
+    # Inverse kinematics (Pink)
+    # ------------------------------------------------------------------
+    def _init_ik(self) -> None:
+        """Create the Pink configuration and the IK tasks.
+
+        The configuration at construction time is the nominal standing pose
+        that the posture task regularizes towards.
+        """
+        import qpsolvers
+
+        available = qpsolvers.available_solvers
+        self.ik_solver = next((s for s in self.SOLVER_PREFERENCE if s in available), None)
+        if self.ik_solver is None:
+            raise RuntimeError("No QP solver available for Pink; run `pip install quadprog`")
+
+        self.configuration = pink.Configuration(self.model, self.data, self.q.copy())
+
+        # Both feet always have a task; which one is "stance" or "swing" is
+        # decided per step by the frame names passed to compute_ik_step.
+        self.tasks = {
+            frame: FrameTask(
+                frame,
+                position_cost=self.FOOT_POSITION_COST,
+                orientation_cost=self.FOOT_ORIENTATION_COST,
+                lm_damping=self.LM_DAMPING,
+            )
+            for frame in self.foot_frames.values()
+        }
+        self.tasks["com"] = ComTask(cost=self.COM_COST, lm_damping=self.LM_DAMPING)
+        self.tasks["posture"] = PostureTask(cost=self.POSTURE_COST)
+
+        self.tasks["posture"].set_target_from_configuration(self.configuration)
+        # Hold both feet and the CoM where they are until targets are given.
+        for frame in self.foot_frames.values():
+            self.tasks[frame].set_target_from_configuration(self.configuration)
+        self.tasks["com"].set_target_from_configuration(self.configuration)
+
+    def reset_ik(self) -> None:
+        """Restart IK from `self.q`, which also becomes the posture target."""
+        self._init_ik()
+
+    def compute_ik_step(self, stance_frame, stance_pose, swing_frame, swing_pose,
+                        com_target, dt=0.02) -> np.ndarray:
+        """Run one differential IK step and return the updated configuration.
+
+        Args:
+            stance_frame: Support foot frame name (e.g. 'left_foot_link').
+            stance_pose: Desired `pin.SE3` of the stance foot (world frame).
+            swing_frame: Swing foot frame name.
+            swing_pose: Desired `pin.SE3` of the swing foot (world frame).
+            com_target: Desired CoM position, (3,) array (world frame).
+            dt: Integration time step [s].
+
+        Returns:
+            The configuration vector `self.configuration.q`. If the inputs are
+            invalid or the QP fails, the configuration is left unchanged.
+        """
+        if stance_frame == swing_frame:
+            raise ValueError("stance_frame and swing_frame must differ")
+        for frame in (stance_frame, swing_frame):
+            if frame not in self.tasks or frame in ("com", "posture"):
+                raise ValueError(f"No foot task for frame '{frame}'")
+        if not dt > 0.0:
+            raise ValueError("dt must be positive")
+
+        com_target = np.asarray(com_target, dtype=float).reshape(-1)
+        poses_valid = all(
+            np.all(np.isfinite(np.asarray(p.homogeneous)))
+            for p in (stance_pose, swing_pose)
+        )
+        if com_target.shape != (3,) or not np.all(np.isfinite(com_target)) or not poses_valid:
+            # Invalid target: keep the current configuration.
+            return self.configuration.q
+
+        # Pick up joint updates made through set_joint_positions / self.q.
+        self.configuration.update(self.q)
+
+        self.tasks[stance_frame].set_target(stance_pose)
+        self.tasks[swing_frame].set_target(swing_pose)
+        self.tasks["com"].set_target(com_target)
+
+        try:
+            velocity = pink.solve_ik(
+                self.configuration, self.tasks.values(), dt=dt, solver=self.ik_solver
+            )
+        except Exception:  # QP infeasible or solver failure
+            return self.configuration.q
+
+        # Reject non-finite or excessive velocities (e.g. near a singularity).
+        norm = np.linalg.norm(velocity)
+        if not np.isfinite(norm):
+            return self.configuration.q
+        if norm > self.MAX_VELOCITY:
+            velocity = velocity * (self.MAX_VELOCITY / norm)
+
+        self.configuration.integrate_inplace(velocity, dt)
+        self.q = self.configuration.q.copy()
+        return self.configuration.q
+
+    def inverse_kinematics(self, stance_frame, stance_pose, swing_frame, swing_pose,
+                           com_target, dt=0.02, iterations=1) -> np.ndarray:
+        """Solve IK towards the given targets using `iterations` Pink steps."""
+        q = self.configuration.q
+        for _ in range(max(1, int(iterations))):
+            q = self.compute_ik_step(
+                stance_frame, stance_pose, swing_frame, swing_pose, com_target, dt
+            )
+        return q

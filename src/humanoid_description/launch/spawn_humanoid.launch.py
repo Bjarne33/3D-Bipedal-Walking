@@ -4,7 +4,7 @@ from launch.actions import IncludeLaunchDescription
 from launch.actions import RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, PathJoinSubstitution
+from launch.substitutions import Command, PathJoinSubstitution, PythonExpression
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -15,6 +15,13 @@ def generate_launch_description():
     pause = LaunchConfiguration('pause')
     world = LaunchConfiguration('world')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    floating = LaunchConfiguration('floating')
+
+    floating_arg = DeclareLaunchArgument(
+        'floating',
+        default_value='false',
+        description='Pin the robot base in the air so it cannot fall (true/false)',
+    )
 
     pause_arg = DeclareLaunchArgument(
         'pause',
@@ -49,7 +56,7 @@ def generate_launch_description():
     )
 
     robot_description = {
-        'robot_description': Command(['xacro', ' ', humanoid_xacro])
+        'robot_description': Command(['xacro', ' ', humanoid_xacro, ' floating:=', floating])
     }
 
     robot_state_publisher = Node(
@@ -62,7 +69,11 @@ def generate_launch_description():
     spawn_entity = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
-        arguments=['-entity', 'humanoid', '-topic', 'robot_description'],
+        arguments=[
+            '-entity', 'humanoid', '-topic', 'robot_description',
+            # Spawn higher when floating so the feet are lifted off the ground.
+            '-z', PythonExpression(["'0.15' if '", floating, "' == 'true' else '0.0'"]),
+        ],
         output='screen',
     )
 
@@ -96,7 +107,8 @@ def generate_launch_description():
             'base_frame': 'base',
             'model_name': 'humanoid',
             'publish_world_markers': True,
-            'publish_world_to_base_tf': True,
+            # When floating, robot_state_publisher already provides world -> base.
+            'publish_world_to_base_tf': PythonExpression(["'", floating, "' != 'true'"]),
         }],
     )
 
@@ -137,6 +149,7 @@ def generate_launch_description():
         pause_arg,
         world_arg,
         use_sim_time_arg,
+        floating_arg,
         gazebo,
         robot_state_publisher,
         spawn_entity,

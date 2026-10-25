@@ -57,6 +57,12 @@ sudo apt install -y \
 	ros-humble-xacro
 ```
 
+Inverse kinematics (`HumanoidKinematics.inverse_kinematics`) uses [Pink](https://github.com/stephane-caron/pink), which is installed via pip together with a QP solver:
+
+```bash
+pip install pin-pink quadprog
+```
+
 Optional but recommended for dependency installation:
 
 ```bash
@@ -109,6 +115,8 @@ Start the full simulation stack (Gazebo + robot spawn + controllers + RViz + con
 
 ```bash
 ros2 launch humanoid_description spawn_humanoid.launch.py
+# Optional: pin the base in the air so the robot cannot fall (useful for inspecting motions)
+ros2 launch humanoid_description spawn_humanoid.launch.py floating:=true
 ```
 
 Run URDF/RViz-only visualization (without Gazebo):
@@ -121,6 +129,7 @@ Trigger one walking step sequence from the walking node service:
 
 ```bash
 ros2 service call /humanoid_walking/step_once std_srvs/srv/Trigger {}
+ros2 service call /humanoid_walking/test_ik std_srvs/srv/Trigger {}   # IK check: left foot fixed, right foot and CoM moved by ik_test_* offsets
 ```
 
 ## Package Overview
@@ -153,6 +162,13 @@ Control and visualization nodes for startup and walking behavior.
 	- Provides service `/humanoid_walking/step_once`.
 	- Executes a single test step sequence with phases (shift, swing, place, settle).
 	- Publishes `JointTrajectory` commands to `effort_position_controller`.
+- `humanoid_walk` (model-based gait, `humanoid_control/gait/`):
+	- Fixed-step footstep planner -> analytic LIPM/DCM CoM trajectory -> swing-foot trajectory -> Pink IK -> `JointTrajectory`.
+	- Action `/humanoid_walk/walk` (`humanoid_interfaces/action/Walk`): `num_steps > 0` walks that many steps plus a closing step, `num_steps = 0` walks until canceled. Cancel or `/humanoid_walk/stop` closes the feet at the next step boundary.
+	- Parameters in `humanoid_control/config/gait.yaml` (step length/time, swing height, DSP ratio, ...). Step width and CoM height are derived from the standing pose by default.
+	- Before the first step the CoM is moved quasi-statically above the first stance foot (`shift_time`, quintic at rest) and held (`hold_time`); `shift_time: 0` disables this. Phases are reported as `shift`, `hold`, `init`, `step`, `final`.
+	- Run: `ros2 launch humanoid_control walk.launch.py`, then e.g. `ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"`.
+	- Unit tests: `python3 -m pytest src/humanoid_control/test/test_gait.py`.
 - `com_visualizer`:
 	- Computes CoM using Pinocchio from robot model + joint states.
 	- Publishes CoM markers and ground projection.

@@ -1,0 +1,12 @@
+# Goal: number of walking steps (the closing step that brings the feet together is added
+# automatically). 0 = walk continuously until the goal is canceled.
+uint32 num_steps
+---
+bool success
+uint32 steps_completed
+string message
+---
+uint32 step_index
+string phase
+string swing_side
+geometry_msgs/Point com

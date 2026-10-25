@@ -9,6 +9,17 @@
   <xacro:include filename="$(find humanoid_description)/urdf/transmissions/leg_transmissions_macro.xacro"/>
   <xacro:include filename="$(find humanoid_description)/urdf/ros2_control.xacro"/>
 
+  <!-- floating:=true pins the base in the air (for inspecting motions without falling) -->
+  <xacro:arg name="floating" default="false"/>
+  <xacro:if value="$(arg floating)">
+    <link name="world" />
+    <joint name="world_to_base" type="fixed">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <parent link="world" />
+      <child link="base" />
+    </joint>
+  </xacro:if>
+
   <link name="base" />
   <joint name="base_to_torso" type="fixed">
     <origin xyz="0 0 1.1" rpy="0 0 0" />
