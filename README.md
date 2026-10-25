@@ -12,7 +12,7 @@ It includes:
 
 - Ubuntu 22.04
 - ROS 2 Humble
-- Gazebo installed through ROS default pairing (`ros_gz`)
+- Gazebo Classic (`gazebo_ros_pkgs`, `gazebo_ros2_control`)
 
 ## 1) Install ROS 2 Humble
 
@@ -33,33 +33,23 @@ echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-## 2) Install Gazebo (default ROS pairing)
+## 2) Install Gazebo Classic
 
-If you are using a specific ROS distribution and do not need a specific Gazebo version, install the default Gazebo/ROS pairing from ROS packages.
+This project uses **Gazebo Classic** (`gazebo_ros`, `gazebo_ros2_control`)
 
-Official Gazebo docs:
+Official docs:
 
-- https://gazebosim.org/docs/latest/
-- https://gazebosim.org/docs/latest/ros_installation/
+- https://classic.gazebosim.org/
+- https://github.com/ros-simulation/gazebo_ros_pkgs
 
-Install command (replace `${ROS_DISTRO}` with your distro, for example `humble`):
+Install Gazebo Classic with its ROS 2 packages and the project dependencies:
 
 ```bash
 sudo apt update
-sudo apt-get install ros-${ROS_DISTRO}-ros-gz
-```
-
-For ROS 2 Humble specifically:
-
-```bash
-sudo apt-get install ros-humble-ros-gz
-```
-
-Then install the remaining project dependencies:
-
-```bash
 sudo apt install -y \
 	ros-humble-gazebo-ros-pkgs \
+	ros-humble-gazebo-ros2-control \
+	ros-humble-pinocchio \
 	ros-humble-ros2-control \
 	ros-humble-ros2-controllers \
 	ros-humble-joint-state-publisher-gui \

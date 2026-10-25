@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import tempfile
 
 import rclpy
 from rclpy.node import Node
@@ -9,8 +8,6 @@ from rclpy.qos import QoSProfile
 from rclpy.qos import QoSReliabilityPolicy
 from rclpy.qos import QoSHistoryPolicy
 
-import pinocchio as pin
-import xacro
 from ament_index_python.packages import get_package_share_directory
 
 from gazebo_msgs.msg import ModelStates
@@ -19,6 +16,8 @@ from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 from tf2_ros import TransformBroadcaster
+
+from humanoid_control.humanoid_kinematics import HumanoidKinematics
 
 
 class CoMVisualizer(Node):
@@ -43,30 +42,14 @@ class CoMVisualizer(Node):
         self.publish_world_markers = bool(self.get_parameter("publish_world_markers").value)
         self.publish_world_to_base_tf = bool(self.get_parameter("publish_world_to_base_tf").value)
 
-        resolved_urdf_path = self._resolve_urdf_path()
-
         # --- load robot model ---
-        self.model = pin.buildModelFromUrdf(resolved_urdf_path, pin.JointModelFreeFlyer())
-        self.data = self.model.createData()
+        pkg_share = get_package_share_directory("humanoid_description")
+        model_path = os.path.join(pkg_share, "urdf", "humanoid.xacro")
+        self.kinematics = HumanoidKinematics.from_xacro(model_path)
+        self.model = self.kinematics.model
 
-        self.get_logger().info(f"Loaded URDF with {self.model.nq} DoF from {resolved_urdf_path}")
-
-        # configuration vector
-        self.q = pin.neutral(self.model)
-
-        if self.model.njoints > 1:
-            root_nq = self.model.joints[1].nq
-            root_nv = self.model.joints[1].nv
-            self.get_logger().info(
-                f"Floating-base check: root joint '{self.model.names[1]}' has nq={root_nq}, nv={root_nv} (expected nq=7, nv=6 for free-flyer)."
-            )
-        else:
-            self.get_logger().info("Floating-base check: model has no joints beyond universe.")
-
-        # joint name -> id
-        self.joint_name_to_id = {name: jid for jid, name in enumerate(self.model.names)}
-
-        self.get_logger().info(f"Joint index mapping: {self.joint_name_to_id}")
+        self.get_logger().info(f"Loaded URDF with {self.model.nq} DoF from {model_path}")
+        self.get_logger().info(f"Joint index mapping: {self.kinematics.joint_name_to_id}")
 
         # --- ROS interfaces ---
         self.sub = self.create_subscription(
@@ -104,6 +87,7 @@ class CoMVisualizer(Node):
 
         self.latest_com = None
         self.latest_link_coms = None
+        self.latest_feet = None
         self.latest_base_pose = None
         self._missing_model_warned = False
         self._missing_pose_warned = False
@@ -117,46 +101,13 @@ class CoMVisualizer(Node):
             f"publish_world_markers={self.publish_world_markers}, publish_world_to_base_tf={self.publish_world_to_base_tf}"
         )
 
-    def _resolve_urdf_path(self) -> str:
-
-        pkg_share = get_package_share_directory("humanoid_description")
-        model_path = os.path.join(pkg_share, "urdf", "humanoid.xacro")
-
-        doc = xacro.process_file(model_path)
-        urdf_xml = doc.toprettyxml(indent="  ")
-        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".urdf", delete=False)
-        tmp_file.write(urdf_xml)
-        tmp_file.close()
-        self.get_logger().info(f"Expanded Xacro to temporary URDF: {tmp_file.name}")
-        return tmp_file.name
-
     def joint_callback(self, msg: JointState):
+        self.kinematics.set_joint_positions(msg.name, msg.position)
+        result = self.kinematics.compute()
 
-        # update joint configuration
-        for name, pos in zip(msg.name, msg.position):
-            jid = self.joint_name_to_id.get(name)
-            if jid is None:
-                continue
-
-            if self.model.joints[jid].nq == 1:
-                self.q[self.model.idx_qs[jid]] = pos
-
-        # compute forward kinematics
-        pin.forwardKinematics(self.model, self.data, self.q)
-
-        # compute CoM
-        com = pin.centerOfMass(self.model, self.data, self.q)
-
-        self.latest_com = com
-
-        link_coms = []
-        for jid in range(1, self.model.njoints):
-            joint_name = self.model.names[jid]
-            com_local = self.model.inertias[jid].lever
-            com_world = self.data.oMi[jid].act(com_local)
-            link_coms.append((joint_name, com_world))
-
-        self.latest_link_coms = link_coms
+        self.latest_com = result.com
+        self.latest_feet = result.feet
+        self.latest_link_coms = self.kinematics.link_coms()
 
     def publish_latest_markers(self):
         if self.latest_com is None:
