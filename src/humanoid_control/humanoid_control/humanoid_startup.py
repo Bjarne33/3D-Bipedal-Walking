@@ -98,7 +98,7 @@ class HumanoidStartupManager(Node):
         )
 
         # ---------------- Timer ----------------
-        self.timer = self.create_timer(0.1, self.update)
+        self.timer = self.create_timer(0.25, self.update)
 
         self.get_logger().info("Humanoid Startup Manager initialized")
 

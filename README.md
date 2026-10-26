@@ -129,6 +129,7 @@ Trigger one walking step sequence from the walking node service:
 
 ```bash
 ros2 service call /humanoid_walking/step_once std_srvs/srv/Trigger {}
+ros2 service call /humanoid_walking/step_n humanoid_interfaces/srv/StepN "{num_steps: 4}"   # n steps, alternating right/left
 ros2 service call /humanoid_walking/test_ik std_srvs/srv/Trigger {}   # IK check: left foot fixed, right foot and CoM moved by ik_test_* offsets
 ```
 
@@ -161,6 +162,7 @@ Control and visualization nodes for startup and walking behavior.
 - `humanoid_walking`:
 	- Provides service `/humanoid_walking/step_once`.
 	- Executes a single test step sequence with phases (shift, swing, place, settle).
+	- Provides service `/humanoid_walking/step_n` (`humanoid_interfaces/srv/StepN`): repeats the test step `num_steps` times, alternating right and left foot (left steps are the mirrored right step).
 	- Publishes `JointTrajectory` commands to `effort_position_controller`.
 - `humanoid_walk` (model-based gait, `humanoid_control/gait/`):
 	- Fixed-step footstep planner -> analytic LIPM/DCM CoM trajectory -> swing-foot trajectory -> Pink IK -> `JointTrajectory`.

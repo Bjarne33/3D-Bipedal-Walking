@@ -3,7 +3,7 @@
 <package format="3">
   <name>humanoid_interfaces</name>
   <version>0.0.0</version>
-  <description>Action interfaces for the humanoid walking controller</description>
+  <description>Action and service interfaces for the humanoid walking controller</description>
   <maintainer email="grotelueschen@campus.tu-berlin.de">bjarne</maintainer>
   <license>Apache-2.0</license>
 

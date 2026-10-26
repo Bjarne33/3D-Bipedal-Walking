@@ -1,0 +1,5 @@
+# Number of alternating steps (right foot first). Must be >= 1.
+int32 num_steps
+---
+bool success
+string message

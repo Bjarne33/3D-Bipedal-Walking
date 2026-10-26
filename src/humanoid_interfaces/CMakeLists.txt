@@ -7,6 +7,7 @@ find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/Walk.action"
+  "srv/StepN.srv"
   DEPENDENCIES geometry_msgs
 )
 

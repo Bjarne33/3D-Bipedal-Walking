@@ -15,7 +15,7 @@
   <xacro:property name="foot_z" value="0.05"/>
 
   <!-- Link mass properties -->
-  <xacro:property name="torso_mass" value="20.0"/>
+  <xacro:property name="torso_mass" value="12.0"/>
   <xacro:property name="hip_yaw_mass" value="0.1"/>
   <xacro:property name="hip_pitch_mass" value="0.1"/>
   <xacro:property name="thigh_mass" value="5.0"/>
@@ -55,6 +55,6 @@
   <xacro:property name="knee_pitch_limit_effort" value="180"/>
   <xacro:property name="ankle_pitch_limit_effort" value="120"/>
   <xacro:property name="ankle_roll_limit_effort" value="120"/>
-  <xacro:property name="leg_joint_limit_velocity" value="5.0"/>
+  <xacro:property name="leg_joint_limit_velocity" value="15.0"/>
 
 </robot>

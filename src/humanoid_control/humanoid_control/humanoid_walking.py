@@ -14,6 +14,7 @@ from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from humanoid_control.humanoid_kinematics import HumanoidKinematics
+from humanoid_interfaces.srv import StepN
 
 
 class StepPhase(Enum):
@@ -131,6 +132,11 @@ class HumanoidWalking(Node):
             '/humanoid_walking/step_once',
             self.step_once_callback,
         )
+        self.step_n_service = self.create_service(
+            StepN,
+            '/humanoid_walking/step_n',
+            self.step_n_callback,
+        )
         self.kinematics = HumanoidKinematics.from_xacro(
             os.path.join(get_package_share_directory('humanoid_description'), 'urdf', 'humanoid.xacro')
         )
@@ -142,7 +148,8 @@ class HumanoidWalking(Node):
         self.timer = self.create_timer(1.0 / max(self.update_rate_hz, 1.0), self.update)
 
         self.get_logger().info(
-            'Humanoid walking node ready: call /humanoid_walking/step_once for test shift-swing-place-settle behavior'
+            'Humanoid walking node ready: call /humanoid_walking/step_once (or /humanoid_walking/step_n) '
+            'for test shift-swing-place-settle behavior'
         )
 
     def joint_state_callback(self, msg: JointState) -> None:
@@ -173,6 +180,35 @@ class HumanoidWalking(Node):
             '(shift-left support -> swing right foot -> place right foot -> centered settle)'
         )
         self.get_logger().info(response.message)
+        return response
+
+    def step_n_callback(self, request: StepN.Request, response: StepN.Response) -> StepN.Response:
+        num_steps = int(request.num_steps)
+        self.get_logger().info(f'Received /humanoid_walking/step_n request (num_steps={num_steps})')
+
+        if num_steps < 1:
+            response.success = False
+            response.message = 'num_steps must be >= 1'
+        elif self.phase != StepPhase.IDLE:
+            response.success = False
+            response.message = 'Step already running'
+        elif not self.have_all_joints():
+            response.success = False
+            response.message = 'Joint states incomplete, cannot step safely yet'
+        else:
+            right_swing = self.build_phase_queue()
+            left_swing = self.mirror_phase_queue(right_swing)
+            self.phase_queue = []
+            for i in range(num_steps):
+                self.phase_queue.extend(right_swing if i % 2 == 0 else left_swing)
+            self.start_next_phase()
+            response.success = True
+            response.message = f'Started {num_steps} alternating test steps (right foot first)'
+
+        if response.success:
+            self.get_logger().info(response.message)
+        else:
+            self.get_logger().warn(f'Step request rejected: {response.message}')
         return response
 
     def test_ik_callback(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
@@ -290,7 +326,7 @@ class HumanoidWalking(Node):
     def start_next_phase(self) -> None:
         if not self.phase_queue:
             self.phase = StepPhase.IDLE
-            self.get_logger().info('Single-step sequence complete')
+            self.get_logger().info('Step sequence complete')
             return
 
         phase, target_pose, duration_sec = self.phase_queue.pop(0)
@@ -348,6 +384,28 @@ class HumanoidWalking(Node):
             (StepPhase.PLACE_RIGHT_FOOT, place_pose, self.place_duration_sec),
             (StepPhase.SETTLE_DOUBLE_SUPPORT, settle_pose, self.settle_duration_sec),
         ]
+
+    @staticmethod
+    def mirror_pose(pose: Dict[str, float]) -> Dict[str, float]:
+        """Mirror a pose about the sagittal plane: swap legs and negate roll/yaw joints."""
+        mirrored = {}
+        for name, value in pose.items():
+            side, joint = name.split('_', 1)
+            other = 'right' if side == 'left' else 'left'
+            mirrored[f'{other}_{joint}'] = -value if joint in ('hip_roll', 'hip_yaw', 'ankle_roll') else value
+        return mirrored
+
+    def mirror_phase_queue(
+        self, queue: List[tuple[StepPhase, Dict[str, float], float]]
+    ) -> List[tuple[StepPhase, Dict[str, float], float]]:
+        """Turn a right-foot step sequence into the equivalent left-foot step sequence."""
+        mirrored_phase = {
+            StepPhase.SHIFT_TO_LEFT_SUPPORT: StepPhase.SHIFT_TO_RIGHT_SUPPORT,
+            StepPhase.SWING_RIGHT_FOOT: StepPhase.SWING_LEFT_FOOT,
+            StepPhase.PLACE_RIGHT_FOOT: StepPhase.PLACE_LEFT_FOOT,
+            StepPhase.SETTLE_DOUBLE_SUPPORT: StepPhase.SETTLE_DOUBLE_SUPPORT,
+        }
+        return [(mirrored_phase[phase], self.mirror_pose(pose), duration) for phase, pose, duration in queue]
 
 
 def main(args=None) -> None:
