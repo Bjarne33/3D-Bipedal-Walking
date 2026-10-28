@@ -8,6 +8,16 @@ from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from enum import Enum
 
+# Standing pose sent at startup, per leg: hip_roll, hip_yaw, hip_pitch, knee, ankle_roll, ankle_pitch.
+STANDING_POSE = {
+    f"{side}_{joint}": value
+    for side in ("left", "right")
+    for joint, value in zip(
+        ("hip_roll", "hip_yaw", "hip_pitch", "knee", "ankle_roll", "ankle_pitch"),
+        (0.0, 0.0, 0.275, -0.5, 0.0, 0.25),
+    )
+}
+
 
 
 class StartupState(Enum):
@@ -55,20 +65,7 @@ class HumanoidStartupManager(Node):
             "right_ankle_pitch"
         ]
 
-        self.target_positions = [
-            0.0,
-            0.0,
-            0.275,
-            -0.5,
-            0.0,
-            0.25,
-            0.0,
-            0.0,
-            0.275,
-            -0.5,
-            0.0,
-            0.25
-        ]
+        self.target_positions = [STANDING_POSE[name] for name in self.joint_names]
 
         self.current_joint_state = None
         self.controllers_future = None

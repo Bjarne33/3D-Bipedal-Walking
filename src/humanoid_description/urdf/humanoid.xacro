@@ -69,7 +69,31 @@
       <frame_name>world</frame_name>
       <update_rate>100.0</update_rate>
     </plugin>
+  </gazebo>
 
+  <gazebo reference="left_ankle_pitch">
+    <provideFeedback>true</provideFeedback>
+  </gazebo>
+  <gazebo reference="right_ankle_pitch">
+    <provideFeedback>true</provideFeedback>
+  </gazebo>
+  <!-- Ankle force/torque sensors. They publish the ankle_pitch joint wrench in the
+       foot_link frame (ankle), measured from child (foot) to parent. -->
+  <gazebo>
+    <plugin name="left_foot_ft" filename="libgazebo_ros_ft_sensor.so">
+      <ros>
+        <remapping>wrench:=left_foot_ft</remapping>
+      </ros>
+      <joint_name>left_ankle_pitch</joint_name>
+      <update_rate>500.0</update_rate>
+    </plugin>
+    <plugin name="right_foot_ft" filename="libgazebo_ros_ft_sensor.so">
+      <ros>
+        <remapping>wrench:=right_foot_ft</remapping>
+      </ros>
+      <joint_name>right_ankle_pitch</joint_name>
+      <update_rate>500.0</update_rate>
+    </plugin>
   </gazebo>
 
 </robot>

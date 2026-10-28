@@ -15,18 +15,30 @@ import numpy as np
 import pinocchio as pin
 import rclpy
 from ament_index_python.packages import get_package_share_directory
+from geometry_msgs.msg import WrenchStamped
+from nav_msgs.msg import Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from humanoid_control.gait import FixedFootstepPlanner, GaitParams, WalkingPattern
+from humanoid_control.gait import (
+    BalanceController,
+    BalanceStateEstimator,
+    FixedFootstepPlanner,
+    GaitParams,
+    WalkingPattern,
+)
+from humanoid_control.gait.state_estimator import axial_to_plane
+from humanoid_control.gait.support_polygon import signed_margin
 from humanoid_control.humanoid_kinematics import HumanoidKinematics
 from humanoid_interfaces.action import Walk
+from humanoid_interfaces.msg import BalanceState
 
 JOINT_NAMES = [
     'left_hip_roll', 'left_hip_yaw', 'left_hip_pitch', 'left_knee', 'left_ankle_roll',
@@ -50,6 +62,71 @@ class PlaneFrame:
         return p[0] * self.forward + p[1] * self.left + p[2] * self.up
 
 
+def plan_walk(standing, config, num_steps: int):
+    """Build the gait plan from the standing kinematics and the node parameters.
+
+    Args:
+        standing: `KinematicsResult` of the standing pose (base frame).
+        config: mapping with `forward_axis`, `first_swing`, `ankle_to_sole`, `step_width`,
+            `com_height` (<= 0: derived from the standing pose) and the `GaitParams` fields.
+        num_steps: number of steps, 0 walks until stopped.
+
+    Returns:
+        (frame, params, planner, pattern)
+    """
+    left, right = standing.feet['left'].position, standing.feet['right'].position
+    lateral = (left - right).copy()
+    lateral[2] = 0.0
+    frame = PlaneFrame(np.array(config['forward_axis'], float), lateral)
+
+    values = {
+        f.name: config[f.name]
+        for f in dataclasses.fields(GaitParams)
+        if f.name not in ('step_width', 'com_height') and f.name in config
+    }
+    width = float(config['step_width'])
+    if width <= 0.0:
+        width = abs((left - right) @ frame.left)
+    height = float(config['com_height'])
+    if height <= 0.0:
+        height = standing.com[2] - (0.5 * (left[2] + right[2]) - float(config['ankle_to_sole']))
+    params = GaitParams(step_width=width, com_height=height, **values)
+    params.validate()
+
+    feet0 = {s: frame.to_plane(standing.feet[s].position) for s in ('left', 'right')}
+    planner = FixedFootstepPlanner(
+        params, feet0['left'][:2], feet0['right'][:2],
+        first_swing=str(config['first_swing']),
+        num_steps=num_steps if num_steps > 0 else None,
+    )
+    com0 = frame.to_plane(standing.com)
+    zero = np.zeros(2)
+    pattern = WalkingPattern(
+        params, planner, feet0['left'], feet0['right'],
+        com_state=(com0[:2], zero, zero), com_z=com0[2],
+    )
+    return frame, params, planner, pattern
+
+
+def rotation_joint_maps(kin, frame) -> Dict[str, Dict[str, tuple]]:
+    """Per side and joint group: (joint names, M) with joint offsets dq = M @ r.
+
+    r is a rotation [about forward, about left] of the body relative to the distal link
+    (stance foot for the ankle group, stance thigh for the hip group). With the distal link
+    held, a joint offset dq rotates the body by -dq about the joint axis, so M = -pinv(A)
+    with the plane components of the joint axes as the columns of A. Uses `kin.q`.
+    """
+    maps = {}
+    for side in ('left', 'right'):
+        maps[side] = {}
+        for group, names in (('ankle', ('ankle_roll', 'ankle_pitch')),
+                             ('hip', ('hip_roll', 'hip_pitch'))):
+            joints = [f'{side}_{n}' for n in names]
+            axes = np.array([axial_to_plane(frame, a) for a in kin.joint_axes(joints)])
+            maps[side][group] = (joints, -np.linalg.pinv(axes.T))
+    return maps
+
+
 class HumanoidWalk(Node):
     def __init__(self) -> None:
         super().__init__('humanoid_walk')
@@ -66,6 +143,12 @@ class HumanoidWalk(Node):
         # <= 0: derive from the standing pose (feet distance / CoM height above the ground).
         self.declare_parameter('step_width', 0.0)
         self.declare_parameter('com_height', 0.0)
+        # Balance state sources: base pose/twist ground truth and ankle force/torque sensors.
+        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('left_ft_topic', '/left_foot_ft')
+        self.declare_parameter('right_ft_topic', '/right_foot_ft')
+        self.declare_parameter('ground_height', 0.0)
+        self.declare_parameter('contact_tolerance', 0.005)
         defaults = GaitParams(zmp_offset_forward=0.05)
         for field in dataclasses.fields(GaitParams):
             if field.name in ('step_width', 'com_height'):
@@ -76,15 +159,36 @@ class HumanoidWalk(Node):
         self.ik_iterations = int(self.get_parameter('ik_iterations').value)
         self.lead = float(self.get_parameter('trajectory_lead_sec').value)
 
+        self.ankle_to_sole = float(self.get_parameter('ankle_to_sole').value)
+        self.ground_height = float(self.get_parameter('ground_height').value)
+        self.contact_tolerance = float(self.get_parameter('contact_tolerance').value)
         self.joint_positions: Dict[str, float] = {}
         self.stop_requested = threading.Event()
         self.walking = False
         self.walk_lock = threading.Lock()
 
+        self.estimator = BalanceStateEstimator(alpha=defaults.balance_state_alpha)
+
         group = ReentrantCallbackGroup()
         self.create_subscription(JointState, '/joint_states', self._joint_state_cb, 10)
+        self.create_subscription(
+            Odometry, str(self.get_parameter('odom_topic').value), self._odom_cb,
+            qos_profile_sensor_data)
+        self.create_subscription(
+            WrenchStamped,
+            str(self.get_parameter('left_ft_topic').value),
+            self._left_ft_cb,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            WrenchStamped,
+            str(self.get_parameter('right_ft_topic').value),
+            self._right_ft_cb,
+            qos_profile_sensor_data,
+        )
         controller = str(self.get_parameter('controller_name').value)
         self.traj_pub = self.create_publisher(JointTrajectory, f'/{controller}/joint_trajectory', 10)
+        self.balance_pub = self.create_publisher(BalanceState, '/humanoid_walk/balance_state', 10)
         self.create_service(
             Trigger, '/humanoid_walk/stop', self._stop_cb, callback_group=group)
 
@@ -107,6 +211,34 @@ class HumanoidWalk(Node):
     def _joint_state_cb(self, msg: JointState) -> None:
         for name, position in zip(msg.name, msg.position):
             self.joint_positions[name] = position
+        self.estimator.set_joint_state(msg.name, msg.position, msg.velocity, msg.effort)
+
+    def _odom_cb(self, msg: Odometry) -> None:
+        pose, twist = msg.pose.pose, msg.twist.twist
+        base = pin.XYZQUATToSE3(np.array([
+            pose.position.x, pose.position.y, pose.position.z,
+            pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w,
+        ]))
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.estimator.set_base(
+            base, stamp,
+            [twist.linear.x, twist.linear.y, twist.linear.z],
+            [twist.angular.x, twist.angular.y, twist.angular.z],
+        )
+
+    def _left_ft_cb(self, msg: WrenchStamped) -> None:
+        self.estimator.set_wrench(
+            'left',
+            [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
+            [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
+        )
+
+    def _right_ft_cb(self, msg: WrenchStamped) -> None:
+        self.estimator.set_wrench(
+            'right',
+            [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
+            [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
+        )
 
     def _have_all_joints(self) -> bool:
         return all(name in self.joint_positions for name in JOINT_NAMES)
@@ -133,24 +265,10 @@ class HumanoidWalk(Node):
         return CancelResponse.ACCEPT
 
     # ------------------------------------------------------------------ setup
-    def _gait_params(self, standing, frame: PlaneFrame) -> GaitParams:
-        values = {
-            f.name: self.get_parameter(f.name).value
-            for f in dataclasses.fields(GaitParams)
-            if f.name not in ('step_width', 'com_height')
-        }
-        left = standing.feet['left'].position
-        right = standing.feet['right'].position
-        width = float(self.get_parameter('step_width').value)
-        if width <= 0.0:
-            width = abs((left - right) @ frame.left)
-        height = float(self.get_parameter('com_height').value)
-        if height <= 0.0:
-            ground_z = 0.5 * (left[2] + right[2]) - float(self.get_parameter('ankle_to_sole').value)
-            height = standing.com[2] - ground_z
-        params = GaitParams(step_width=width, com_height=height, **values)
-        params.validate()
-        return params
+    def _plan_config(self) -> dict:
+        names = ['forward_axis', 'first_swing', 'ankle_to_sole', 'step_width', 'com_height']
+        names += [f.name for f in dataclasses.fields(GaitParams)]
+        return {name: self.get_parameter(name).value for name in names}
 
     def _init_kinematics(self):
         kin = self.kinematics
@@ -158,6 +276,58 @@ class HumanoidWalk(Node):
         kin.set_joint_positions(self.joint_positions.keys(), self.joint_positions.values())
         kin.reset_ik()
         return kin, kin.compute()
+
+    def _apply_joint_offsets(self, q: np.ndarray, maps, out) -> np.ndarray:
+        offsets = {}
+        for side, rot in out.ankle_rotation.items():
+            joints, m = maps[side]['ankle']
+            offsets.update(zip(joints, m @ rot))
+        if out.torso_side is not None:
+            joints, m = maps[out.torso_side]['hip']
+            offsets.update(zip(joints, m @ out.torso_rotation))
+        q = q.copy()
+        for name, value in offsets.items():
+            jid = self.kinematics.joint_name_to_id[name]
+            q[self.kinematics.model.idx_qs[jid]] += float(value)
+        return q
+
+    def _publish_balance_state(self, ref, est, out, balance, enabled):
+        msg = BalanceState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.step_index = int(ref.step_index)
+        msg.phase = ref.phase
+        msg.enabled = bool(enabled)
+        msg.estimate_valid = est is not None
+        xi_ref = balance.dcm_reference(ref)
+        msg.ref_com_x, msg.ref_com_y = (float(v) for v in ref.com[:2])
+        msg.ref_dcm_x, msg.ref_dcm_y = (float(v) for v in xi_ref)
+        msg.ref_zmp_x, msg.ref_zmp_y = (float(v) for v in ref.zmp[:2])
+        nan2 = (float('nan'), float('nan'))
+        msg.des_zmp_x, msg.des_zmp_y = msg.ref_zmp_x, msg.ref_zmp_y
+        msg.meas_com_x, msg.meas_com_y = nan2
+        msg.meas_dcm_x, msg.meas_dcm_y = nan2
+        msg.meas_zmp_x, msg.meas_zmp_y = nan2
+        msg.dcm_margin = float('nan')
+        if est is not None:
+            msg.zmp_valid = bool(est.zmp_valid)
+            msg.meas_com_x, msg.meas_com_y = (float(v) for v in est.com)
+            msg.meas_dcm_x, msg.meas_dcm_y = (float(v) for v in est.dcm)
+            if est.zmp_valid:
+                msg.meas_zmp_x, msg.meas_zmp_y = (float(v) for v in est.zmp)
+            if len(est.support_hull) >= 3:
+                msg.dcm_margin = float(signed_margin(est.dcm, est.support_hull))
+            msg.tilt_x, msg.tilt_y = (float(v) for v in est.tilt)
+        if out is not None:
+            msg.saturated = bool(out.saturated)
+            msg.des_zmp_x, msg.des_zmp_y = (float(v) for v in out.zmp_des)
+            msg.com_offset_x, msg.com_offset_y = (float(v) for v in out.com_offset)
+            if ref.stance_side in out.ankle_rotation:
+                ankle = out.ankle_rotation[ref.stance_side]
+                msg.ankle_rot_x, msg.ankle_rot_y = (float(v) for v in ankle)
+            msg.torso_rot_x, msg.torso_rot_y = (float(v) for v in out.torso_rotation)
+            msg.step_adjusted = bool(np.any(out.step_adjust != 0.0))
+            msg.step_adjust_x, msg.step_adjust_y = (float(v) for v in out.step_adjust)
+        self.balance_pub.publish(msg)
 
     def _publish_joints(self, q: np.ndarray, q_prev: Optional[np.ndarray]) -> None:
         kin = self.kinematics
@@ -198,25 +368,13 @@ class HumanoidWalk(Node):
         self.stop_requested.clear()
         num_steps = int(goal_handle.request.num_steps)
         kin, standing = self._init_kinematics()
-        left0, right0 = standing.feet['left'], standing.feet['right']
-
-        lateral = (left0.position - right0.position).copy()
-        lateral[2] = 0.0
-        frame = PlaneFrame(np.array(self.get_parameter('forward_axis').value, float), lateral)
-        params = self._gait_params(standing, frame)
-
-        feet0 = {s: frame.to_plane(standing.feet[s].position) for s in ('left', 'right')}
-        planner = FixedFootstepPlanner(
-            params, feet0['left'][:2], feet0['right'][:2],
-            first_swing=str(self.get_parameter('first_swing').value),
-            num_steps=num_steps if num_steps > 0 else None,
-        )
-        com0 = frame.to_plane(standing.com)
-        zero = np.zeros(2)
-        pattern = WalkingPattern(
-            params, planner, feet0['left'], feet0['right'],
-            com_state=(com0[:2], zero, zero), com_z=com0[2],
-        )
+        frame, params, planner, pattern = plan_walk(standing, self._plan_config(), num_steps)
+        self.estimator.alpha = params.balance_state_alpha
+        if not self.estimator.set_walk_reference_frame():
+            self.get_logger().warn(
+                'No base pose received: balance feedback disabled for this walk')
+        balance = BalanceController(params)
+        joint_maps = rotation_joint_maps(kin, frame)
         rotations = {s: standing.feet[s].rotation for s in ('left', 'right')}
         frames = kin.foot_frames
         self.get_logger().info(
@@ -255,16 +413,29 @@ class HumanoidWalk(Node):
                 else:
                     last_step = ref.step_index
 
+            ref_feet = {side: np.array(ref.feet[side], dtype=float) for side in ('left', 'right')}
+            com_plane = np.array(ref.com, dtype=float)
+            # Stabiliser stage: measured state -> corrected CoM target and joint offsets.
+            est = self.estimator.estimate(
+                kin, frame, self.ground_height, self.contact_tolerance, balance.omega,
+                self.ankle_to_sole,
+            )
+            out = balance.update(ref, est, dt) if est is not None else None
+            if out is not None:
+                com_plane[:2] += out.com_offset
+
             poses = {
-                s: pin.SE3(rotations[s], frame.to_base(ref.feet[s])) for s in ('left', 'right')
+                s: pin.SE3(rotations[s], frame.to_base(ref_feet[s])) for s in ('left', 'right')
             }
-            com_target = frame.to_base(ref.com)
+            com_target = frame.to_base(com_plane)
             for _ in range(self.ik_iterations):
                 q = kin.compute_ik_step(
                     frames['left'], poses['left'], frames['right'], poses['right'], com_target, dt
                 )
-            self._publish_joints(q, q_prev)
-            q_prev = q.copy()
+            q_cmd = self._apply_joint_offsets(q, joint_maps, out) if out is not None else q
+            self._publish_joints(q_cmd, q_prev)
+            q_prev = q_cmd.copy()
+            self._publish_balance_state(ref, est, out, balance, params.balance_enabled)
 
             feedback_count += 1
             if feedback_count % max(1, int(self.rate_hz / 10)) == 0:

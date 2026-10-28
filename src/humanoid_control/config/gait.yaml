@@ -7,6 +7,11 @@ humanoid_walk:
     first_swing: right
     forward_axis: [0.0, 1.0, 0.0]  # base-frame walking direction
     ankle_to_sole: 0.05
+    odom_topic: /odom  # base pose/twist ground truth (gazebo_ros_p3d)
+    left_ft_topic: /left_foot_ft
+    right_ft_topic: /right_foot_ft
+    ground_height: 0.0
+    contact_tolerance: 0.005
 
     # <= 0: derived from the standing pose
     step_width: 0.0
@@ -14,12 +19,46 @@ humanoid_walk:
 
     step_length: 0.10
     step_time: 1.2
-    dsp_ratio: 0.3
+    dsp_ratio: 0.5
     swing_height: 0.05
-    zmp_offset_forward: 0.05  # foot centre is 5 cm ahead of the ankle frame
-    shift_time: 3.0  # quasi-static CoM shift above the first stance foot
+    zmp_offset_forward: 0.025  # foot centre is 5 cm ahead of the ankle frame
+    zmp_lateral: 0.08  # single-support ZMP 4 cm inside the stance foot centre
+    shift_time: 0.0 # 3.0  # quasi-static CoM shift above the first stance foot
     hold_time: 1.0
     init_time: 0.5
     final_time: 1.5
     stop_transition_time: 0.8
     lookahead_steps: 6
+
+    # Closed-loop balance (gait/balance.py); off = open loop, the estimate is still published
+    # on /humanoid_walk/balance_state. omega = sqrt(g / com_height).
+    balance_enabled: true
+    balance_state_alpha: 0.5
+    balance_zmp_margin: 0.02
+    balance_k_xi_lateral: 2.0
+    balance_k_xi_sagittal: 2.0
+    balance_k_zmp_lateral: 4.0
+    balance_k_zmp_sagittal: 4.0
+    balance_zmp_dsp_scale: 1.0
+    balance_k_com_lateral: 3.0
+    balance_k_com_sagittal: 3.0
+    balance_com_leak_time: 2.0
+    balance_com_offset_limit_lateral: 0.06
+    balance_com_offset_limit_sagittal: 0.06
+    balance_k_ankle_roll: 0.0  # stance-ankle damping: no gain in Gazebo tuning
+    balance_k_ankle_pitch: 0.0
+    balance_ankle_leak_time: 1.0
+    balance_ankle_offset_limit: 0.10
+    balance_k_torso_p: 0.6
+    balance_k_torso_d: 0.06
+    balance_hip_offset_limit: 0.10
+
+    # Step adjustment (enabled only when balance_enabled=true and saturation is detected)
+    step_adjust_enabled: false
+    step_adjust_gain_lateral: 1.0
+    step_adjust_gain_sagittal: 1.0
+    step_adjust_limit_lateral_out: 0.08
+    step_adjust_limit_lateral_in: 0.04
+    step_adjust_limit_sagittal: 0.08
+    step_adjust_lock_time: 0.20
+    step_adjust_min_norm: 0.01

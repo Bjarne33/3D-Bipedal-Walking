@@ -141,6 +141,7 @@ Robot model and simulation assets.
 
 - `urdf/`: Humanoid model as Xacro/URDF, including links, joints, inertia, transmissions, and `ros2_control` setup.
 - `config/ros2_control_controllers.yaml`: Controller configuration.
+- `config/gazebo_params.yaml`: Gazebo ROS node parameters (`/clock` published at 1000 Hz so sim-time control loops are not limited to the 10 Hz default).
 - `worlds/world.sdf`: Gazebo world file.
 - `rviz/urdf.rviz`: RViz configuration.
 - `launch/spawn_humanoid.launch.py`: Full simulation bring-up:
@@ -165,12 +166,29 @@ Control and visualization nodes for startup and walking behavior.
 	- Provides service `/humanoid_walking/step_n` (`humanoid_interfaces/srv/StepN`): repeats the test step `num_steps` times, alternating right and left foot (left steps are the mirrored right step).
 	- Publishes `JointTrajectory` commands to `effort_position_controller`.
 - `humanoid_walk` (model-based gait, `humanoid_control/gait/`):
-	- Fixed-step footstep planner -> analytic LIPM/DCM CoM trajectory -> swing-foot trajectory -> Pink IK -> `JointTrajectory`.
+	- Fixed-step footstep planner -> analytic LIPM/DCM CoM trajectory -> swing-foot trajectory -> Pink IK (feet, CoM, upright torso orientation) -> `JointTrajectory`.
+	- Closed-loop stabilizer between pattern generation and IK (`gait/state_estimator.py`, `gait/balance.py`), on by default (`balance_enabled: true`; `false` gives the open-loop gait, the estimate is still published):
+		- State estimate in the gait plane frame (walk-start base pose as reference): CoM from the `/odom` base pose (`gazebo_ros_p3d` ground truth) + `/joint_states`, low-pass filtered CoM velocity, DCM `xi = c + c_dot / omega`. The measured ZMP and the support polygon come from the feet loaded by more than 30 N on `/left_foot_ft` / `/right_foot_ft` (averaged over all samples since the last loop); without FT data the support polygon falls back to grounded soles.
+		- DCM tracking: `p_des = p_ref + k_xi (xi - xi_ref)`, clamped into the support polygon minus `balance_zmp_margin`.
+		- CoM admittance: the IK CoM target is shifted by an offset integrated from `-k_com (c - c_ref) - k_zmp (p_des - p_meas)` (leaky, limited). In double support the ZMP term is scaled by `balance_zmp_dsp_scale`, since the measured ZMP then also reflects internal leg forces.
+		- Torso feedback: measured base tilt is fed back (`balance_k_torso_p/d`) through the stance hip in single support (both hips in double support).
+		- Stance-ankle damping (`balance_k_ankle_roll/pitch`) is available but off by default (no benefit in Gazebo tuning). Step adjustment (`step_adjust_*`) is only computed and published, not applied to the footstep plan.
+		- `zmp_lateral: 0.08` places the single-support reference ZMP 4 cm inside the stance foot centre, which reduces the lateral rocking.
+	- Publishes `/humanoid_walk/balance_state` (`humanoid_interfaces/msg/BalanceState`: reference/measured CoM, DCM, ZMP, desired ZMP, saturation, offsets) for debug/monitoring.
+	- Gazebo validation (headless, balance defaults): `num_steps: 6` and continuous walking cancelled after 10 s (9 steps, feet closed) each completed 3/3 runs without a fall; CoM error RMS 1.5-2.9 cm, base roll/pitch < 7 deg. The open-loop gait falls after about 3 s (step 1-2).
 	- Action `/humanoid_walk/walk` (`humanoid_interfaces/action/Walk`): `num_steps > 0` walks that many steps plus a closing step, `num_steps = 0` walks until canceled. Cancel or `/humanoid_walk/stop` closes the feet at the next step boundary.
-	- Parameters in `humanoid_control/config/gait.yaml` (step length/time, swing height, DSP ratio, ...). Step width and CoM height are derived from the standing pose by default.
+	- Parameters in `humanoid_control/config/gait.yaml` (step length/time, swing height, DSP ratio, balance gains/limits, ...). Step width and CoM height are derived from the standing pose by default.
 	- Before the first step the CoM is moved quasi-statically above the first stance foot (`shift_time`, quintic at rest) and held (`hold_time`); `shift_time: 0` disables this. Phases are reported as `shift`, `hold`, `init`, `step`, `final`.
 	- Run: `ros2 launch humanoid_control walk.launch.py`, then e.g. `ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"`.
-	- Unit tests: `python3 -m pytest src/humanoid_control/test/test_gait.py`.
+	- Unit tests: `python3 -m pytest src/humanoid_control/test/test_gait.py src/humanoid_control/test/test_balance.py`.
+- Foot force/torque sensing:
+	- `libgazebo_ros_ft_sensor.so` is attached to both ankle-pitch joints and publishes `/left_foot_ft` and `/right_foot_ft`.
+	- These topics are consumed by `humanoid_walk` balance estimation when `balance_enabled=true`.
+- `gait_check` (offline, no ROS/Gazebo needed): builds the `humanoid_walk` pattern from `gait.yaml` and the startup standing pose, runs the IK at the node rate and reports per phase the margin of the reference ZMP and CoM to the support polygon (sole boxes from the URDF), the IK CoM error and the torso tilt. Exits with 1 if the ZMP leaves the support polygon or the IK misses the CoM.
+	- Run: `ros2 run humanoid_control gait_check [--steps 4] [--set zmp_lateral=0.06 ...] [-v]`.
+- `gait_monitor` (live, next to Gazebo and `humanoid_walk`): measured CoM from the Gazebo ground-truth base pose and `/joint_states`, which feet are on the ground, CoM and capture-point (DCM) margins to the support polygon, reference-minus-measured CoM, base roll/pitch, worst joint tracking error and the joint closest to its effort limit. Warns on DCM outside the support polygon, effort saturation and falls.
+	- Run: `ros2 run humanoid_control gait_monitor --ros-args -p use_sim_time:=true`.
+	- Unit tests for the support polygon: `python3 -m pytest src/humanoid_control/test/test_support_polygon.py`.
 - `com_visualizer`:
 	- Computes CoM using Pinocchio from robot model + joint states.
 	- Publishes CoM markers and ground projection.

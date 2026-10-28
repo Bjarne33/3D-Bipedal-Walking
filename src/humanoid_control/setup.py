@@ -26,6 +26,8 @@ setup(
             'com_visualizer = humanoid_control.com_visualizer:main',
             'humanoid_walking = humanoid_control.humanoid_walking:main',
             'humanoid_walk = humanoid_control.humanoid_walk:main',
+            'gait_monitor = humanoid_control.gait_monitor:main',
+            'gait_check = humanoid_control.gait_check:main',
         ],
     },
 )

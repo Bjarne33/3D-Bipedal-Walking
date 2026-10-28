@@ -14,6 +14,7 @@ RIGHT = np.array([0.0, -0.125, 0.075])
 
 
 def make_pattern(num_steps, **kw):
+    kw.setdefault('zmp_lateral', 0.0)  # tests below assume a foot-centred single-support ZMP
     params = GaitParams(**kw)
     planner = FixedFootstepPlanner(params, LEFT[:2], RIGHT[:2], 'right', num_steps)
     return params, planner, WalkingPattern(params, planner, LEFT, RIGHT)
@@ -149,6 +150,8 @@ def test_swing_foot_stays_down_in_dsp_and_lifts_after():
     side = planner.step(k).swing_side
     assert start.feet[side][2] == pytest.approx(0.075)
     assert mid.feet[side][2] == pytest.approx(0.075 + params.swing_height, abs=1e-6)
+    assert not start.single_support and mid.single_support
+    assert not pat.sample(0.0).single_support
 
 
 def test_com_stays_bounded_in_long_continuous_walk():

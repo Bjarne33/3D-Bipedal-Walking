@@ -50,9 +50,17 @@ def generate_launch_description():
         [FindPackageShare('gazebo_ros'), 'launch', 'gazebo.launch.py']
     )
 
+    gazebo_params = PathJoinSubstitution(
+        [FindPackageShare('humanoid_description'), 'config', 'gazebo_params.yaml']
+    )
+
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(gazebo_launch_file),
-        launch_arguments={'pause': pause, 'world': world}.items(),
+        launch_arguments={
+            'pause': pause,
+            'world': world,
+            'params_file': gazebo_params,
+        }.items(),
     )
 
     robot_description = {

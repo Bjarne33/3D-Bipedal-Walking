@@ -46,8 +46,8 @@
   <xacro:property name="ankle_pitch_limit_lower" value="-0.5"/>
   <xacro:property name="ankle_pitch_limit_upper" value="0.8"/>
 
-  <xacro:property name="ankle_roll_limit_lower" value="-0.3"/>
-  <xacro:property name="ankle_roll_limit_upper" value="0.3"/>
+  <xacro:property name="ankle_roll_limit_lower" value="-0.4"/>
+  <xacro:property name="ankle_roll_limit_upper" value="0.4"/>
 
   <xacro:property name="hip_yaw_limit_effort" value="200"/>
   <xacro:property name="hip_roll_limit_effort" value="200"/>

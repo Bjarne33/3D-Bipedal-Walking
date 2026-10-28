@@ -38,6 +38,7 @@ class WalkingReference:
     stance_side: Optional[str]
     swing_side: Optional[str]
     finished: bool = False
+    single_support: bool = False  # swing foot in the air (step phase after the double support)
 
 
 @dataclass
@@ -224,6 +225,7 @@ class WalkingPattern:
         finished = False
         step_index = -1
         stance_side = swing_side = None
+        single_support = False
 
         if t < self.lead:
             phase = 'shift' if t < self.shift_time else 'hold'
@@ -273,6 +275,7 @@ class WalkingPattern:
                 c, v, a, zmp = self._step_state(k, tau)
                 feet, feet_vel = self._foot_positions(step, tau)
                 step_index, stance_side, swing_side = k, step.stance_side, step.swing_side
+                single_support = tau >= self.dsp_time
 
         return WalkingReference(
             t=t_abs,
@@ -286,6 +289,7 @@ class WalkingPattern:
             stance_side=stance_side,
             swing_side=swing_side,
             finished=finished,
+            single_support=single_support,
         )
 
     # ------------------------------------------------------------------ stopping an endless walk

@@ -36,6 +36,30 @@ def expand_xacro_to_urdf(xacro_path: str) -> str:
         return tmp.name
 
 
+def sole_corners_from_urdf(urdf_path: str, link: str) -> Optional[np.ndarray]:
+    """Bottom corners (4, 3) of the box collision of `link`, in the link frame; None without a box."""
+    import xml.etree.ElementTree as ET
+
+    for elem in ET.parse(urdf_path).getroot().iter("link"):
+        if elem.get("name") != link:
+            continue
+        for collision in elem.iter("collision"):
+            box = collision.find("geometry/box")
+            if box is None:
+                continue
+            size = np.array([float(v) for v in box.get("size").split()])
+            origin = collision.find("origin")
+            xyz = np.zeros(3)
+            rpy = np.zeros(3)
+            if origin is not None:
+                xyz = np.array([float(v) for v in origin.get("xyz", "0 0 0").split()])
+                rpy = np.array([float(v) for v in origin.get("rpy", "0 0 0").split()])
+            signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+            corners = xyz + (0.5 * signs * size) @ pin.rpy.rpyToMatrix(rpy).T
+            return corners[np.argsort(corners[:, 2])[:4]]
+    return None
+
+
 class HumanoidKinematics:
     """Loads the robot URDF via Pinocchio and provides kinematics.
 
@@ -47,6 +71,8 @@ class HumanoidKinematics:
     FOOT_POSITION_COST = 100.0
     FOOT_ORIENTATION_COST = 50.0
     COM_COST = 10.0
+    # Keeps the torso upright so the CoM is shifted by the legs, not by leaning the torso.
+    TORSO_ORIENTATION_COST = 10.0
     POSTURE_COST = 1e-3
     # Levenberg-Marquardt damping keeps the solution bounded near singularities.
     LM_DAMPING = 1e-2
@@ -71,6 +97,9 @@ class HumanoidKinematics:
             if not self.model.existFrame(frame):
                 raise ValueError(f"Foot frame '{frame}' ({side}) not found in {urdf_path}")
             self.foot_frame_ids[side] = self.model.getFrameId(frame)
+        self.sole_corners = {
+            side: sole_corners_from_urdf(urdf_path, frame) for side, frame in self.foot_frames.items()
+        }
 
         self._init_ik()
 
@@ -110,6 +139,17 @@ class HumanoidKinematics:
                 quaternion=np.array(pin.Quaternion(placement.rotation).coeffs()),
             )
         return KinematicsResult(com=com, feet=feet)
+
+    def joint_axes(self, names) -> np.ndarray:
+        """Rotation axes (rows, base frame) of 1-DoF joints at the configuration `self.q`."""
+        data = self.model.createData()
+        pin.computeJointJacobians(self.model, data, self.q)
+        axes = []
+        for name in names:
+            jid = self.joint_name_to_id[name]
+            jac = pin.getJointJacobian(self.model, data, jid, pin.ReferenceFrame.WORLD)
+            axes.append(np.array(jac[3:, self.model.idx_vs[jid]]))
+        return np.array(axes)
 
     def link_coms(self):
         """Return (joint_name, CoM position in base frame) per joint body.
@@ -151,9 +191,16 @@ class HumanoidKinematics:
             for frame in self.foot_frames.values()
         }
         self.tasks["com"] = ComTask(cost=self.COM_COST, lm_damping=self.LM_DAMPING)
+        self.tasks["torso"] = FrameTask(
+            "torso_link",
+            position_cost=0.0,
+            orientation_cost=self.TORSO_ORIENTATION_COST,
+            lm_damping=self.LM_DAMPING,
+        )
         self.tasks["posture"] = PostureTask(cost=self.POSTURE_COST)
 
         self.tasks["posture"].set_target_from_configuration(self.configuration)
+        self.tasks["torso"].set_target_from_configuration(self.configuration)
         # Hold both feet and the CoM where they are until targets are given.
         for frame in self.foot_frames.values():
             self.tasks[frame].set_target_from_configuration(self.configuration)
@@ -182,7 +229,7 @@ class HumanoidKinematics:
         if stance_frame == swing_frame:
             raise ValueError("stance_frame and swing_frame must differ")
         for frame in (stance_frame, swing_frame):
-            if frame not in self.tasks or frame in ("com", "posture"):
+            if frame not in self.tasks or frame in ("com", "torso", "posture"):
                 raise ValueError(f"No foot task for frame '{frame}'")
         if not dt > 0.0:
             raise ValueError("dt must be positive")
