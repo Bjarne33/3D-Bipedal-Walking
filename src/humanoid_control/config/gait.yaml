@@ -23,14 +23,15 @@ humanoid_walk:
     swing_height: 0.05
     zmp_offset_forward: 0.025  # foot centre is 5 cm ahead of the ankle frame
     zmp_lateral: 0.08  # single-support ZMP 4 cm inside the stance foot centre
-    shift_time: 0.0 # 3.0  # quasi-static CoM shift above the first stance foot
+    shift_time: 0.0  # quasi-static CoM shift above the first stance foot (0 disables it)
+    shift_lateral: 0.0  # max lateral CoM travel in that shift (0 = full shift onto the foot)
     hold_time: 1.0
     init_time: 0.5
     final_time: 1.5
     stop_transition_time: 0.8
     lookahead_steps: 6
 
-    # Closed-loop balance (gait/balance.py); off = open loop, the estimate is still published
+    # Closed-loop balance (tools/balance.py); off = open loop, the estimate is still published
     # on /humanoid_walk/balance_state. omega = sqrt(g / com_height).
     balance_enabled: true
     balance_state_alpha: 0.5

@@ -6,6 +6,7 @@ from launch_ros.actions import Node
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
+
 def generate_launch_description():
     urdf_file = PathJoinSubstitution([
         FindPackageShare('humanoid_description'),
@@ -14,7 +15,8 @@ def generate_launch_description():
     ])
 
     robot_description = Command([FindExecutable(name='xacro'), ' ', urdf_file])
-    rviz_config_path = PathJoinSubstitution([FindPackageShare('humanoid_description'), 'rviz', 'urdf.rviz'])
+    rviz_config_path = PathJoinSubstitution(
+        [FindPackageShare('humanoid_description'), 'rviz', 'urdf.rviz'])
     world_frame = LaunchConfiguration('world_frame')
     base_frame = LaunchConfiguration('base_frame')
     publish_world_to_base_tf = LaunchConfiguration('publish_world_to_base_tf')
@@ -36,7 +38,7 @@ def generate_launch_description():
         default_value='true',
         description='Publish a static world->base transform when no other source provides it',
     )
-    
+
     joint_state_publisher = Node(
         package='joint_state_publisher_gui',
         executable='joint_state_publisher_gui',

@@ -37,7 +37,7 @@ def expand_xacro_to_urdf(xacro_path: str) -> str:
 
 
 def sole_corners_from_urdf(urdf_path: str, link: str) -> Optional[np.ndarray]:
-    """Bottom corners (4, 3) of the box collision of `link`, in the link frame; None without a box."""
+    """Bottom corners (4, 3) of the box collision of `link` in the link frame, or None."""
     import xml.etree.ElementTree as ET
 
     for elem in ET.parse(urdf_path).getroot().iter("link"):
@@ -61,7 +61,8 @@ def sole_corners_from_urdf(urdf_path: str, link: str) -> Optional[np.ndarray]:
 
 
 class HumanoidKinematics:
-    """Loads the robot URDF via Pinocchio and provides kinematics.
+    """
+    Loads the robot URDF via Pinocchio and provides kinematics.
 
     Provides forward kinematics (CoM and foot poses) and differential inverse
     kinematics (multi-task, solved with Pink) for walking control.
@@ -98,7 +99,8 @@ class HumanoidKinematics:
                 raise ValueError(f"Foot frame '{frame}' ({side}) not found in {urdf_path}")
             self.foot_frame_ids[side] = self.model.getFrameId(frame)
         self.sole_corners = {
-            side: sole_corners_from_urdf(urdf_path, frame) for side, frame in self.foot_frames.items()
+            side: sole_corners_from_urdf(urdf_path, frame)
+            for side, frame in self.foot_frames.items()
         }
 
         self._init_ik()
@@ -152,7 +154,8 @@ class HumanoidKinematics:
         return np.array(axes)
 
     def link_coms(self):
-        """Return (joint_name, CoM position in base frame) per joint body.
+        """
+        Return (joint_name, CoM position in base frame) per joint body.
 
         Call after `compute()` / `forward_kinematics()`.
         """
@@ -165,7 +168,8 @@ class HumanoidKinematics:
     # Inverse kinematics (Pink)
     # ------------------------------------------------------------------
     def _init_ik(self) -> None:
-        """Create the Pink configuration and the IK tasks.
+        """
+        Create the Pink configuration and the IK tasks.
 
         The configuration at construction time is the nominal standing pose
         that the posture task regularizes towards.
@@ -212,9 +216,10 @@ class HumanoidKinematics:
 
     def compute_ik_step(self, stance_frame, stance_pose, swing_frame, swing_pose,
                         com_target, dt=0.02) -> np.ndarray:
-        """Run one differential IK step and return the updated configuration.
+        """
+        Run one differential IK step and return the updated configuration.
 
-        Args:
+        Inputs:
             stance_frame: Support foot frame name (e.g. 'left_foot_link').
             stance_pose: Desired `pin.SE3` of the stance foot (world frame).
             swing_frame: Swing foot frame name.
@@ -222,7 +227,7 @@ class HumanoidKinematics:
             com_target: Desired CoM position, (3,) array (world frame).
             dt: Integration time step [s].
 
-        Returns:
+        Result:
             The configuration vector `self.configuration.q`. If the inputs are
             invalid or the QP fails, the configuration is left unchanged.
         """

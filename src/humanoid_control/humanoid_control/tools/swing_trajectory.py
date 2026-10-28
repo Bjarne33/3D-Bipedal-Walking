@@ -12,7 +12,8 @@ def min_jerk(s: float) -> Tuple[float, float]:
 
 
 class SwingFootTrajectory:
-    """Foot path from `start` to `target` (3D, same ground height) lasting `duration`.
+    """
+    Foot path from `start` to `target` (3D, same ground height) lasting `duration`.
 
     Velocity and acceleration vanish at lift-off and touch-down in all axes.
     """

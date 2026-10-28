@@ -5,12 +5,16 @@ from typing import List, Optional
 
 import numpy as np
 
-from humanoid_control.gait.gait_params import GaitParams
+from humanoid_control.tools.gait_params import GaitParams
 
 
 @dataclass
 class Footstep:
-    """One step: the swing foot moves from `swing_start` to `swing_target` while `stance` carries the robot."""
+    """
+    One step: the swing foot moves from `swing_start` to `swing_target`.
+
+    The `stance` foot carries the robot meanwhile.
+    """
 
     index: int
     swing_side: str  # 'left' or 'right'
@@ -24,7 +28,8 @@ class Footstep:
 
 
 class FixedFootstepPlanner:
-    """Alternating steps of constant length and width.
+    """
+    Alternating steps of constant length and width.
 
     The first step is a half step, every later step has `step_length`. For a finite plan
     (`num_steps` is not None) one closing step with zero length is appended so that the
@@ -57,7 +62,7 @@ class FixedFootstepPlanner:
 
     @property
     def total_steps(self) -> Optional[int]:
-        """Number of steps including the closing step, or None for an endless plan."""
+        """Return the number of steps including the closing step, or None for an endless plan."""
         return None if self.num_steps is None else self.num_steps + 1
 
     def _lateral(self, side: str) -> float:

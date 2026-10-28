@@ -1,19 +1,16 @@
+"""Joint-space test motions: predefined shift-swing-place-settle step sequences."""
+
 import math
-import os
 from enum import Enum
 from typing import Dict, List
 
-import numpy as np
-import pinocchio as pin
 import rclpy
-from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
-
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from humanoid_control.humanoid_kinematics import HumanoidKinematics
+from humanoid_control.tools.joints import JOINT_NAMES, STANDING_POSE
 from humanoid_interfaces.srv import StepN
 
 
@@ -28,9 +25,9 @@ class StepPhase(Enum):
     SETTLE_DOUBLE_SUPPORT = 7
 
 
-class HumanoidWalking(Node):
+class HumanoidPredefinedTrajs(Node):
     def __init__(self) -> None:
-        super().__init__('humanoid_walking')
+        super().__init__('humanoid_predefined_trajs')
 
         self.declare_parameter('controller_name', 'effort_position_controller')
         self.declare_parameter('pose_tolerance', 0.08)
@@ -53,15 +50,6 @@ class HumanoidWalking(Node):
         self.declare_parameter('place_knee_delta', -0.08)
         self.declare_parameter('place_ankle_pitch_delta', -0.08)
 
-        # Inverse kinematics test (/humanoid_walking/test_ik)
-        self.declare_parameter('ik_test_swing_offset', [0.05, 0.0, 0.04])
-        self.declare_parameter('ik_test_com_offset', [0.0, 0.03, 0.0])
-        self.declare_parameter('ik_test_iterations', 100)
-        self.declare_parameter('ik_test_dt', 0.02)
-        self.declare_parameter('ik_test_tolerance', 1e-3)
-        self.declare_parameter('ik_test_execute', True)
-        self.declare_parameter('ik_test_duration_sec', 3.0)
-
         self.controller_name = str(self.get_parameter('controller_name').value)
         self.pose_tolerance = float(self.get_parameter('pose_tolerance').value)
         self.update_rate_hz = float(self.get_parameter('update_rate_hz').value)
@@ -83,35 +71,8 @@ class HumanoidWalking(Node):
         self.place_knee_delta = float(self.get_parameter('place_knee_delta').value)
         self.place_ankle_pitch_delta = float(self.get_parameter('place_ankle_pitch_delta').value)
 
-        self.joint_names = [
-            'left_hip_roll',
-            'left_hip_yaw',
-            'left_hip_pitch',
-            'left_knee',
-            'left_ankle_roll',
-            'left_ankle_pitch',
-            'right_hip_roll',
-            'right_hip_yaw',
-            'right_hip_pitch',
-            'right_knee',
-            'right_ankle_roll',
-            'right_ankle_pitch',
-        ]
-
-        self.neutral_pose = {
-            'left_hip_roll': 0.0,
-            'left_hip_yaw': 0.0,
-            'left_hip_pitch': 0.275,
-            'left_knee': -0.5,
-            'left_ankle_roll': 0.0,
-            'left_ankle_pitch': 0.25,
-            'right_hip_roll': 0.0,
-            'right_hip_yaw': 0.0,
-            'right_hip_pitch': 0.275,
-            'right_knee': -0.5,
-            'right_ankle_roll': 0.0,
-            'right_ankle_pitch': 0.25,
-        }
+        self.joint_names = list(JOINT_NAMES)
+        self.neutral_pose = dict(STANDING_POSE)
 
         self.current_joint_positions: Dict[str, float] = {}
         self.phase = StepPhase.IDLE
@@ -129,26 +90,19 @@ class HumanoidWalking(Node):
 
         self.step_service = self.create_service(
             Trigger,
-            '/humanoid_walking/step_once',
+            '/humanoid_predefined_trajs/step_once',
             self.step_once_callback,
         )
         self.step_n_service = self.create_service(
             StepN,
-            '/humanoid_walking/step_n',
+            '/humanoid_predefined_trajs/step_n',
             self.step_n_callback,
-        )
-        self.kinematics = HumanoidKinematics.from_xacro(
-            os.path.join(get_package_share_directory('humanoid_description'), 'urdf', 'humanoid.xacro')
-        )
-        self.ik_service = self.create_service(
-            Trigger,
-            '/humanoid_walking/test_ik',
-            self.test_ik_callback,
         )
         self.timer = self.create_timer(1.0 / max(self.update_rate_hz, 1.0), self.update)
 
         self.get_logger().info(
-            'Humanoid walking node ready: call /humanoid_walking/step_once (or /humanoid_walking/step_n) '
+            'Predefined trajectories node ready: call /humanoid_predefined_trajs/step_once '
+            '(or /humanoid_predefined_trajs/step_n) '
             'for test shift-swing-place-settle behavior'
         )
 
@@ -156,8 +110,9 @@ class HumanoidWalking(Node):
         for name, position in zip(msg.name, msg.position):
             self.current_joint_positions[name] = position
 
-    def step_once_callback(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
-        self.get_logger().info('Received /humanoid_walking/step_once request')
+    def step_once_callback(self, _request: Trigger.Request,
+                           response: Trigger.Response) -> Trigger.Response:
+        self.get_logger().info('Received /humanoid_predefined_trajs/step_once request')
 
         if self.phase != StepPhase.IDLE:
             response.success = False
@@ -184,7 +139,8 @@ class HumanoidWalking(Node):
 
     def step_n_callback(self, request: StepN.Request, response: StepN.Response) -> StepN.Response:
         num_steps = int(request.num_steps)
-        self.get_logger().info(f'Received /humanoid_walking/step_n request (num_steps={num_steps})')
+        self.get_logger().info(
+            f'Received /humanoid_predefined_trajs/step_n request (num_steps={num_steps})')
 
         if num_steps < 1:
             response.success = False
@@ -211,88 +167,6 @@ class HumanoidWalking(Node):
             self.get_logger().warn(f'Step request rejected: {response.message}')
         return response
 
-    def test_ik_callback(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
-        """Check IK: left foot stays put, right foot and CoM move by the configured offsets."""
-        if not self.have_all_joints():
-            response.success = False
-            response.message = 'Joint states incomplete, cannot run IK test'
-            return response
-
-        iterations = int(self.get_parameter('ik_test_iterations').value)
-        dt = float(self.get_parameter('ik_test_dt').value)
-        tolerance = float(self.get_parameter('ik_test_tolerance').value)
-        swing_offset = np.array(self.get_parameter('ik_test_swing_offset').value, dtype=float)
-        com_offset = np.array(self.get_parameter('ik_test_com_offset').value, dtype=float)
-        if swing_offset.shape != (3,) or com_offset.shape != (3,):
-            response.success = False
-            response.message = 'ik_test_swing_offset and ik_test_com_offset need 3 values'
-            return response
-
-        kin = self.kinematics
-        # FK is computed in the base frame: floating base stays at identity, joints from /joint_states.
-        kin.q = pin.neutral(kin.model)
-        kin.set_joint_positions(self.current_joint_positions.keys(), self.current_joint_positions.values())
-        kin.reset_ik()
-        start = kin.compute()
-
-        stance_frame = kin.foot_frames['left']
-        swing_frame = kin.foot_frames['right']
-        stance_pose = pin.SE3(start.feet['left'].rotation, start.feet['left'].position)
-        swing_pose = pin.SE3(start.feet['right'].rotation, start.feet['right'].position + swing_offset)
-        com_target = start.com + com_offset
-
-        try:
-            for _ in range(iterations):
-                kin.compute_ik_step(stance_frame, stance_pose, swing_frame, swing_pose, com_target, dt)
-        except ValueError as exc:
-            response.success = False
-            response.message = f'IK test failed: {exc}'
-            return response
-
-        result = kin.compute()
-        stance_err = float(np.linalg.norm(result.feet['left'].position - stance_pose.translation))
-        swing_err = float(np.linalg.norm(result.feet['right'].position - swing_pose.translation))
-        com_err = float(np.linalg.norm(result.com - com_target))
-        # Rotation error of the swing foot (angle of the relative rotation).
-        rot_err = float(np.linalg.norm(pin.log3(swing_pose.rotation.T @ result.feet['right'].rotation)))
-
-        q = kin.configuration.q
-        joint_deltas = {
-            name: float(q[kin.model.idx_qs[kin.joint_name_to_id[name]]] - self.current_joint_positions[name])
-            for name in self.joint_names
-        }
-        lower, upper = kin.model.lowerPositionLimit, kin.model.upperPositionLimit
-        limit_violations = [
-            name for name in self.joint_names
-            if not lower[kin.model.idx_qs[kin.joint_name_to_id[name]]] - 1e-6
-            <= q[kin.model.idx_qs[kin.joint_name_to_id[name]]]
-            <= upper[kin.model.idx_qs[kin.joint_name_to_id[name]]] + 1e-6
-        ]
-
-        ok = max(stance_err, swing_err, com_err, rot_err) < tolerance
-        lines = [
-            f'IK test {"PASSED" if ok else "FAILED"} ({iterations} steps, dt={dt}, solver={kin.ik_solver})',
-            f'errors [m/rad]: stance_pos={stance_err:.2e} swing_pos={swing_err:.2e} '
-            f'swing_rot={rot_err:.2e} com={com_err:.2e} (tol {tolerance:.1e})',
-            'joint deltas [rad]: ' + ', '.join(f'{n}={d:+.3f}' for n, d in joint_deltas.items()),
-        ]
-        if limit_violations:
-            ok = False
-            lines.append(f'joint limit violations: {limit_violations}')
-
-        if ok and bool(self.get_parameter('ik_test_execute').value):
-            if self.phase != StepPhase.IDLE:
-                lines.append('not executed: step running')
-            else:
-                target = {name: float(q[kin.model.idx_qs[kin.joint_name_to_id[name]]]) for name in self.joint_names}
-                self.publish_pose(target, float(self.get_parameter('ik_test_duration_sec').value))
-                lines.append('IK solution sent to controller')
-
-        response.success = ok
-        response.message = '\n'.join(lines)
-        self.get_logger().info(response.message)
-        return response
-
     def update(self) -> None:
         if self.phase == StepPhase.IDLE:
             return
@@ -306,7 +180,8 @@ class HumanoidWalking(Node):
 
         if elapsed > max_phase_time:
             self.get_logger().error(
-                f'Phase {self.phase.name} timed out after {elapsed:.2f}s (max {max_phase_time:.2f}s).'
+                f'Phase {self.phase.name} timed out after {elapsed:.2f}s '
+                f'(max {max_phase_time:.2f}s).'
             )
             self.phase = StepPhase.IDLE
             self.phase_queue = []
@@ -360,12 +235,15 @@ class HumanoidWalking(Node):
         swing_pose = dict(shift_left_pose)
         swing_pose['right_hip_pitch'] = swing_pose['right_hip_pitch'] + self.swing_hip_pitch_delta
         swing_pose['right_knee'] = swing_pose['right_knee'] + self.swing_knee_delta
-        swing_pose['right_ankle_pitch'] = swing_pose['right_ankle_pitch'] + self.swing_ankle_pitch_delta
+        swing_pose['right_ankle_pitch'] = swing_pose['right_ankle_pitch'] + \
+            self.swing_ankle_pitch_delta
 
         place_pose = dict(shift_left_pose)
-        place_pose['right_hip_pitch'] = self.neutral_pose['right_hip_pitch'] + self.place_hip_pitch_delta
+        place_pose['right_hip_pitch'] = self.neutral_pose['right_hip_pitch'] + \
+            self.place_hip_pitch_delta
         place_pose['right_knee'] = self.neutral_pose['right_knee'] + self.place_knee_delta
-        place_pose['right_ankle_pitch'] = self.neutral_pose['right_ankle_pitch'] + self.place_ankle_pitch_delta
+        place_pose['right_ankle_pitch'] = self.neutral_pose['right_ankle_pitch'] + \
+            self.place_ankle_pitch_delta
         place_pose['left_ankle_roll'] = place_pose['left_ankle_roll'] + 0.1
 
         # Settle by re-centering lateral roll while keeping the placed-foot geometry.
@@ -392,7 +270,8 @@ class HumanoidWalking(Node):
         for name, value in pose.items():
             side, joint = name.split('_', 1)
             other = 'right' if side == 'left' else 'left'
-            mirrored[f'{other}_{joint}'] = -value if joint in ('hip_roll', 'hip_yaw', 'ankle_roll') else value
+            mirrored[f'{other}_{joint}'] = - \
+                value if joint in ('hip_roll', 'hip_yaw', 'ankle_roll') else value
         return mirrored
 
     def mirror_phase_queue(
@@ -405,12 +284,13 @@ class HumanoidWalking(Node):
             StepPhase.PLACE_RIGHT_FOOT: StepPhase.PLACE_LEFT_FOOT,
             StepPhase.SETTLE_DOUBLE_SUPPORT: StepPhase.SETTLE_DOUBLE_SUPPORT,
         }
-        return [(mirrored_phase[phase], self.mirror_pose(pose), duration) for phase, pose, duration in queue]
+        return [(mirrored_phase[phase], self.mirror_pose(pose), duration)
+                for phase, pose, duration in queue]
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = HumanoidWalking()
+    node = HumanoidPredefinedTrajs()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()

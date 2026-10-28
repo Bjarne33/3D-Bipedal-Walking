@@ -7,7 +7,8 @@ GRAVITY = 9.81
 
 @dataclass
 class GaitParams:
-    """All lengths in metres, times in seconds.
+    """
+    All lengths in metres, times in seconds.
 
     The gait is planned in a 2D plane frame (x forward, y towards the left foot) with z up.
     """
@@ -18,16 +19,20 @@ class GaitParams:
     dsp_ratio: float = 0.2  # fraction of a step in which the swing foot stays on the ground
     swing_height: float = 0.05
     com_height: float = 0.75  # CoM height above the ground used for the LIPM
-    zmp_offset_forward: float = 0.0  # ZMP / CoM reference offset from the ankle frame (foot centre)
+    # ZMP / CoM reference offset from the ankle frame (foot centre)
+    zmp_offset_forward: float = 0.0
     init_time: float = 1.5  # CoM shift from the standing state onto the first stance foot
-    shift_time: float = 0.0  # quasi-static CoM shift above the first stance foot (0 disables the lead-in)
+    # quasi-static CoM shift above the first stance foot (0 disables the lead-in)
+    shift_time: float = 0.0
     hold_time: float = 0.0  # pause above the first stance foot before the dynamic init phase
-    shift_lateral: float = 0.0  # max lateral CoM travel in the quasi-static shift (0 = full shift onto the foot)
-    zmp_lateral: float = 0.08  # lateral ZMP distance from the body midline during single support (0 = stance foot centre)
+    # max lateral CoM travel in the quasi-static shift (0 = full shift onto the foot)
+    shift_lateral: float = 0.0
+    # lateral ZMP distance from the body midline during single support (0 = stance foot centre)
+    zmp_lateral: float = 0.08
     final_time: float = 1.5  # CoM settling to the centre of the feet after the last step
     stop_transition_time: float = 0.8  # blend time used when a running walk is stopped
     lookahead_steps: int = 6  # steps of preview used for the DCM end-of-step values
-    # Closed-loop balance (gait/balance.py); omega is derived from com_height.
+    # Closed-loop balance (tools/balance.py); omega is derived from com_height.
     balance_enabled: bool = True
     balance_state_alpha: float = 0.5  # low-pass weight of the measured CoM velocity (1 = raw)
     balance_zmp_margin: float = 0.02  # desired ZMP is kept this far inside the support polygon

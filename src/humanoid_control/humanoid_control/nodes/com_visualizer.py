@@ -17,7 +17,7 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 from tf2_ros import TransformBroadcaster
 
-from humanoid_control.humanoid_kinematics import HumanoidKinematics
+from humanoid_control.tools.humanoid_kinematics import HumanoidKinematics
 
 
 class CoMVisualizer(Node):
@@ -98,7 +98,8 @@ class CoMVisualizer(Node):
 
         self.get_logger().info(
             f"World CoM source: topic={self.model_states_topic}, model_name={self.model_name}, "
-            f"publish_world_markers={self.publish_world_markers}, publish_world_to_base_tf={self.publish_world_to_base_tf}"
+            f"publish_world_markers={self.publish_world_markers}, "
+            f"publish_world_to_base_tf={self.publish_world_to_base_tf}"
         )
 
     def joint_callback(self, msg: JointState):
@@ -115,7 +116,8 @@ class CoMVisualizer(Node):
 
         self.publish_markers(self.latest_com)
 
-    def _new_marker(self, marker_id: int, marker_type: int, now_msg, frame_id: str, namespace: str):
+    def _new_marker(self, marker_id: int, marker_type: int,
+                    now_msg, frame_id: str, namespace: str):
         marker = Marker()
         marker.header.frame_id = frame_id
         marker.header.stamp = now_msg
@@ -196,7 +198,8 @@ class CoMVisualizer(Node):
         if self.latest_base_pose is None:
             if not self._missing_pose_warned:
                 self.get_logger().warn(
-                    f"No pose received yet from {self.model_states_topic}; world CoM markers will be skipped."
+                    f"No pose received yet from {self.model_states_topic}; "
+                    "world CoM markers will be skipped."
                 )
                 self._missing_pose_warned = True
             return None
@@ -219,7 +222,12 @@ class CoMVisualizer(Node):
         now_msg = self.get_clock().now().to_msg()
 
         # CoM sphere
-        com_marker = self._new_marker(0 + marker_id_offset, Marker.SPHERE, now_msg, frame_id, namespace)
+        com_marker = self._new_marker(
+            0 + marker_id_offset,
+            Marker.SPHERE,
+            now_msg,
+            frame_id,
+            namespace)
 
         com_marker.pose.position.x = float(com[0])
         com_marker.pose.position.y = float(com[1])
@@ -237,7 +245,12 @@ class CoMVisualizer(Node):
         com_marker.color.a = 1.0
 
         # Ground projection sphere
-        proj_marker = self._new_marker(1 + marker_id_offset, Marker.SPHERE, now_msg, frame_id, namespace)
+        proj_marker = self._new_marker(
+            1 + marker_id_offset,
+            Marker.SPHERE,
+            now_msg,
+            frame_id,
+            namespace)
 
         proj_marker.pose.position.x = float(com[0])
         proj_marker.pose.position.y = float(com[1])
@@ -255,7 +268,12 @@ class CoMVisualizer(Node):
         proj_marker.color.a = 1.0
 
         # Vertical line marker
-        line_marker = self._new_marker(2 + marker_id_offset, Marker.LINE_STRIP, now_msg, frame_id, namespace)
+        line_marker = self._new_marker(
+            2 + marker_id_offset,
+            Marker.LINE_STRIP,
+            now_msg,
+            frame_id,
+            namespace)
 
         line_marker.scale.x = 0.01
 
@@ -293,6 +311,7 @@ class CoMVisualizer(Node):
                     marker_id_offset=100,
                 )
 
+
 def main():
 
     rclpy.init()
@@ -300,6 +319,7 @@ def main():
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()

@@ -1,23 +1,14 @@
-import rclpy
 import time
-
-from rclpy.node import Node
-from controller_manager_msgs.srv import ListControllers
-from std_srvs.srv import Empty
-from sensor_msgs.msg import JointState
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from enum import Enum
 
-# Standing pose sent at startup, per leg: hip_roll, hip_yaw, hip_pitch, knee, ankle_roll, ankle_pitch.
-STANDING_POSE = {
-    f"{side}_{joint}": value
-    for side in ("left", "right")
-    for joint, value in zip(
-        ("hip_roll", "hip_yaw", "hip_pitch", "knee", "ankle_roll", "ankle_pitch"),
-        (0.0, 0.0, 0.275, -0.5, 0.0, 0.25),
-    )
-}
+import rclpy
+from controller_manager_msgs.srv import ListControllers
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from std_srvs.srv import Empty
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from humanoid_control.tools.joints import JOINT_NAMES, STANDING_POSE
 
 
 class StartupState(Enum):
@@ -50,20 +41,7 @@ class HumanoidStartupManager(Node):
         self.start_time = self.get_clock().now()
 
         # ---------------- Target Pose ----------------
-        self.joint_names = [
-            "left_hip_roll",
-            "left_hip_yaw",
-            "left_hip_pitch",
-            "left_knee",
-            "left_ankle_roll",
-            "left_ankle_pitch",
-            "right_hip_roll",
-            "right_hip_yaw",
-            "right_hip_pitch",
-            "right_knee",
-            "right_ankle_roll",
-            "right_ankle_pitch"
-        ]
+        self.joint_names = list(JOINT_NAMES)
 
         self.target_positions = [STANDING_POSE[name] for name in self.joint_names]
 
@@ -113,7 +91,8 @@ class HumanoidStartupManager(Node):
                 self.get_logger().info("Controllers active")
                 self.state = StartupState.PAUSE_SIM
             else:
-                self.get_logger().info("Unpausing and pausing simulation to trigger controller activation")
+                self.get_logger().info(
+                    "Unpausing and pausing simulation to trigger controller activation")
                 self.unpause_client.call_async(Empty.Request())
                 time.sleep(0.005)
                 self.pause_client.call_async(Empty.Request())
@@ -132,7 +111,7 @@ class HumanoidStartupManager(Node):
                 self.get_logger().info("Initial pose reached")
                 self.state = StartupState.READY
                 self.timer.cancel()
-        
+
     # ============================================================
     # State Checks
     # ============================================================
@@ -249,6 +228,7 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

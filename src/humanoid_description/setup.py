@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
-from glob import glob
 import os
+
 
 def package_files(directory):
     paths = []
@@ -8,6 +8,7 @@ def package_files(directory):
         for filename in filenames:
             paths.append(os.path.join(path, filename))
     return paths
+
 
 data_files = [
     ('share/ament_index/resource_index/packages',
@@ -20,7 +21,7 @@ for folder in ['urdf', 'launch', 'config', 'rviz', 'worlds']:
     for file in files:
         install_path = os.path.join('share/humanoid_description', os.path.dirname(file))
         data_files.append((install_path, [file]))
-        
+
 package_name = 'humanoid_description'
 
 setup(
@@ -32,7 +33,7 @@ setup(
     zip_safe=True,
     maintainer='bjarne',
     maintainer_email='grotelueschen@campus.tu-berlin.de',
-    description='TODO: Package description',
+    description='Robot model, Gazebo world, controllers and launch files for the biped.',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

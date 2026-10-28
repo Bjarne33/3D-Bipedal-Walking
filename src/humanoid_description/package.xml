@@ -3,7 +3,7 @@
 <package format="3">
   <name>humanoid_description</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Robot model, Gazebo world, controller configuration and launch files for the humanoid biped.</description>
   <maintainer email="grotelueschen@campus.tu-berlin.de">bjarne</maintainer>
   <license>Apache-2.0</license>
 

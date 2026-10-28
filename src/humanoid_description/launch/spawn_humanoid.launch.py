@@ -11,7 +11,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    rviz_config_path = PathJoinSubstitution([FindPackageShare('humanoid_description'), 'rviz', 'urdf.rviz'])
+    rviz_config_path = PathJoinSubstitution(
+        [FindPackageShare('humanoid_description'), 'rviz', 'urdf.rviz'])
     pause = LaunchConfiguration('pause')
     world = LaunchConfiguration('world')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -120,10 +121,10 @@ def generate_launch_description():
         }],
     )
 
-    humanoid_walking = Node(
+    humanoid_predefined_trajs = Node(
         package='humanoid_control',
-        executable='humanoid_walking',
-        name='humanoid_walking',
+        executable='humanoid_predefined_trajs',
+        name='humanoid_predefined_trajs',
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
@@ -152,7 +153,7 @@ def generate_launch_description():
         arguments=['-d', rviz_config_path],
         parameters=[{'use_sim_time': use_sim_time}],
     )
-    
+
     return LaunchDescription([
         pause_arg,
         world_arg,
@@ -166,5 +167,5 @@ def generate_launch_description():
         rviz,
         humanoid_startup,
         com_visualizer,
-        humanoid_walking,
+        humanoid_predefined_trajs,
     ])

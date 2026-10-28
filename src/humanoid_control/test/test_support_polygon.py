@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from humanoid_control.gait.support_polygon import clamp_to_hull, convex_hull, signed_margin
+from humanoid_control.tools.support_polygon import clamp_to_hull, convex_hull, signed_margin
 
 SQUARE = [[0, 0], [1, 0], [1, 1], [0, 1], [0.5, 0.5]]
 

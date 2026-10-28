@@ -31,7 +31,7 @@ def _segment_distance(p, a, b) -> float:
 
 
 def signed_margin(point, hull) -> float:
-    """Distance of `point` to the boundary of the convex polygon `hull` (CCW): > 0 inside, < 0 outside."""
+    """Distance of `point` to the boundary of the CCW convex polygon `hull` (> 0 inside)."""
     p = np.asarray(point, float)[:2]
     hull = np.asarray(hull, float)
     if len(hull) == 0:
@@ -42,19 +42,21 @@ def signed_margin(point, hull) -> float:
     dist = min(_segment_distance(p, a, b) for a, b in edges)
     if len(hull) < 3:
         return -dist
-    inside = all((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0.0 for a, b in edges)
+    inside = all((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1])
+                 * (p[0] - a[0]) >= 0.0 for a, b in edges)
     return dist if inside else -dist
 
 
 def clamp_to_hull(point, hull, margin: float = 0.0):
-    """Project `point` into the convex polygon `hull`, keeping at least `margin` from edges.
+    """
+    Project `point` into the convex polygon `hull`, keeping at least `margin` from edges.
 
-    Args:
+    Inputs:
         point: 2D point.
         hull: convex hull points in counter-clockwise order.
         margin: inward safety margin [m].
 
-    Returns:
+    Result:
         (projected_point, saturated) with saturated=True when clamping was needed.
     """
     p = np.asarray(point, float)[:2].copy()

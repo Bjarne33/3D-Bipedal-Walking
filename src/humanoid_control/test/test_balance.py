@@ -2,13 +2,13 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
-from humanoid_control.gait.balance import (
+from humanoid_control.tools.balance import (
     BalanceController,
     BalanceEstimate,
     cop_shift_to_rotation,
 )
-from humanoid_control.gait.gait_params import GaitParams
-from humanoid_control.gait.state_estimator import (
+from humanoid_control.tools.gait_params import GaitParams
+from humanoid_control.tools.state_estimator import (
     axial_to_plane,
     BalanceStateEstimator,
     cop_from_ankle_wrench,
@@ -187,8 +187,8 @@ def model():
         share = get_package_share_directory('humanoid_description')
     except Exception:  # noqa: BLE001 - package not built / sourced
         pytest.skip('humanoid_description not installed')
-    from humanoid_control.humanoid_kinematics import HumanoidKinematics
-    from humanoid_control.humanoid_startup import STANDING_POSE
+    from humanoid_control.tools.humanoid_kinematics import HumanoidKinematics
+    from humanoid_control.tools.joints import STANDING_POSE
     kin = HumanoidKinematics.from_xacro(os.path.join(share, 'urdf', 'humanoid.xacro'))
     kin.set_joint_positions(STANDING_POSE.keys(), STANDING_POSE.values())
     standing = kin.compute()
@@ -268,7 +268,7 @@ def test_estimator_support_and_zmp_come_from_loaded_feet(model):
 @pytest.mark.parametrize('group', ['ankle', 'hip'])
 def test_rotation_joint_maps_rotate_body_as_requested(model, group):
     pytest.importorskip('humanoid_interfaces')
-    from humanoid_control.humanoid_walk import rotation_joint_maps
+    from humanoid_control.tools.plan import rotation_joint_maps
     kin, standing, pose = model
     frame = Frame(standing)
     maps = rotation_joint_maps(kin, frame)

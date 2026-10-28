@@ -5,7 +5,8 @@ It includes:
 
 - Robot description and simulation launch files.
 - Startup logic for controller readiness and initial pose.
-- A walking test node that executes a single step sequence.
+- A joint-space test node (`humanoid_predefined_trajs`) that executes predefined step sequences.
+- A model-based walking node (`humanoid_walk`) with closed-loop balance.
 - CoM visualization markers in base and world frames.
 
 ## Requirements
@@ -125,12 +126,36 @@ Run URDF/RViz-only visualization (without Gazebo):
 ros2 launch humanoid_description humanoid_rviz.launch.py
 ```
 
-Trigger one walking step sequence from the walking node service:
+Trigger the joint-space test motions:
 
 ```bash
-ros2 service call /humanoid_walking/step_once std_srvs/srv/Trigger {}
-ros2 service call /humanoid_walking/step_n humanoid_interfaces/srv/StepN "{num_steps: 4}"   # n steps, alternating right/left
-ros2 service call /humanoid_walking/test_ik std_srvs/srv/Trigger {}   # IK check: left foot fixed, right foot and CoM moved by ik_test_* offsets
+ros2 service call /humanoid_predefined_trajs/step_once std_srvs/srv/Trigger {}
+ros2 service call /humanoid_predefined_trajs/step_n humanoid_interfaces/srv/StepN "{num_steps: 4}"   # n steps, alternating right/left
+```
+
+Start the model-based gait node (with the simulation already running) and send a walk goal:
+
+```bash
+ros2 launch humanoid_control walk.launch.py
+ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"
+```
+
+## Repository Structure
+
+```text
+src/
+  humanoid_description/   Xacro model, Gazebo world, controller config, RViz config, launch files
+  humanoid_interfaces/    Walk action, StepN service, BalanceState message
+  humanoid_control/
+    config/gait.yaml      Parameters of humanoid_walk
+    launch/walk.launch.py Starts humanoid_walk with gait.yaml
+    humanoid_control/
+      nodes/              humanoid_startup, humanoid_predefined_trajs, humanoid_walk, com_visualizer
+      tools/              ROS-independent modules used by the nodes:
+                            joints.py (joint order, standing pose), humanoid_kinematics.py (Pinocchio/Pink IK),
+                            gait modules (footstep planner, LIPM/DCM, swing trajectory, walking pattern,
+                            plan, balance, state estimator, support polygon, gait_params)
+    test/                 Unit tests and style checks
 ```
 
 ## Package Overview
@@ -160,14 +185,14 @@ Control and visualization nodes for startup and walking behavior.
 	- Waits for controllers to become active.
 	- Sends an initial standing pose to the trajectory controller.
 	- Handles pause/unpause sequencing for startup.
-- `humanoid_walking`:
-	- Provides service `/humanoid_walking/step_once`.
+- `humanoid_predefined_trajs` (joint-space test motions):
+	- Provides service `/humanoid_predefined_trajs/step_once`.
 	- Executes a single test step sequence with phases (shift, swing, place, settle).
-	- Provides service `/humanoid_walking/step_n` (`humanoid_interfaces/srv/StepN`): repeats the test step `num_steps` times, alternating right and left foot (left steps are the mirrored right step).
+	- Provides service `/humanoid_predefined_trajs/step_n` (`humanoid_interfaces/srv/StepN`): repeats the test step `num_steps` times, alternating right and left foot (left steps are the mirrored right step).
 	- Publishes `JointTrajectory` commands to `effort_position_controller`.
-- `humanoid_walk` (model-based gait, `humanoid_control/gait/`):
+- `humanoid_walk` (model-based gait, `humanoid_control/tools/`):
 	- Fixed-step footstep planner -> analytic LIPM/DCM CoM trajectory -> swing-foot trajectory -> Pink IK (feet, CoM, upright torso orientation) -> `JointTrajectory`.
-	- Closed-loop stabilizer between pattern generation and IK (`gait/state_estimator.py`, `gait/balance.py`), on by default (`balance_enabled: true`; `false` gives the open-loop gait, the estimate is still published):
+	- Closed-loop stabilizer between pattern generation and IK (`tools/state_estimator.py`, `tools/balance.py`), on by default (`balance_enabled: true`; `false` gives the open-loop gait, the estimate is still published):
 		- State estimate in the gait plane frame (walk-start base pose as reference): CoM from the `/odom` base pose (`gazebo_ros_p3d` ground truth) + `/joint_states`, low-pass filtered CoM velocity, DCM `xi = c + c_dot / omega`. The measured ZMP and the support polygon come from the feet loaded by more than 30 N on `/left_foot_ft` / `/right_foot_ft` (averaged over all samples since the last loop); without FT data the support polygon falls back to grounded soles.
 		- DCM tracking: `p_des = p_ref + k_xi (xi - xi_ref)`, clamped into the support polygon minus `balance_zmp_margin`.
 		- CoM admittance: the IK CoM target is shifted by an offset integrated from `-k_com (c - c_ref) - k_zmp (p_des - p_meas)` (leaky, limited). In double support the ZMP term is scaled by `balance_zmp_dsp_scale`, since the measured ZMP then also reflects internal leg forces.
@@ -180,15 +205,11 @@ Control and visualization nodes for startup and walking behavior.
 	- Parameters in `humanoid_control/config/gait.yaml` (step length/time, swing height, DSP ratio, balance gains/limits, ...). Step width and CoM height are derived from the standing pose by default.
 	- Before the first step the CoM is moved quasi-statically above the first stance foot (`shift_time`, quintic at rest) and held (`hold_time`); `shift_time: 0` disables this. Phases are reported as `shift`, `hold`, `init`, `step`, `final`.
 	- Run: `ros2 launch humanoid_control walk.launch.py`, then e.g. `ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"`.
-	- Unit tests: `python3 -m pytest src/humanoid_control/test/test_gait.py src/humanoid_control/test/test_balance.py`.
+	- Unit tests: `python3 -m pytest src/humanoid_control/test`.
+	- Parameters (`gait.yaml`) override the `GaitParams` defaults; `step_width` and `com_height` <= 0 are derived from the standing pose.
 - Foot force/torque sensing:
 	- `libgazebo_ros_ft_sensor.so` is attached to both ankle-pitch joints and publishes `/left_foot_ft` and `/right_foot_ft`.
 	- These topics are consumed by `humanoid_walk` balance estimation when `balance_enabled=true`.
-- `gait_check` (offline, no ROS/Gazebo needed): builds the `humanoid_walk` pattern from `gait.yaml` and the startup standing pose, runs the IK at the node rate and reports per phase the margin of the reference ZMP and CoM to the support polygon (sole boxes from the URDF), the IK CoM error and the torso tilt. Exits with 1 if the ZMP leaves the support polygon or the IK misses the CoM.
-	- Run: `ros2 run humanoid_control gait_check [--steps 4] [--set zmp_lateral=0.06 ...] [-v]`.
-- `gait_monitor` (live, next to Gazebo and `humanoid_walk`): measured CoM from the Gazebo ground-truth base pose and `/joint_states`, which feet are on the ground, CoM and capture-point (DCM) margins to the support polygon, reference-minus-measured CoM, base roll/pitch, worst joint tracking error and the joint closest to its effort limit. Warns on DCM outside the support polygon, effort saturation and falls.
-	- Run: `ros2 run humanoid_control gait_monitor --ros-args -p use_sim_time:=true`.
-	- Unit tests for the support polygon: `python3 -m pytest src/humanoid_control/test/test_support_polygon.py`.
 - `com_visualizer`:
 	- Computes CoM using Pinocchio from robot model + joint states.
 	- Publishes CoM markers and ground projection.

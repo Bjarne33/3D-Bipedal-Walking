@@ -2,4 +2,5 @@
 /install
 /build
 /.github/copilot-instructions.md
+/.vscode
 __pycache__/

@@ -1,4 +1,5 @@
-"""Measured balance state for humanoid_walk (base ground truth + joint states + ankle FT).
+"""
+Measured balance state for humanoid_walk (base ground truth + joint states + ankle FT).
 
 The estimator keeps its own Pinocchio configuration and data so that it never disturbs the
 IK solver. All outputs are expressed in the gait plane frame of the walk (x forward, y left),
@@ -12,8 +13,8 @@ from typing import Dict, Optional
 import numpy as np
 import pinocchio as pin
 
-from humanoid_control.gait.balance import BalanceEstimate
-from humanoid_control.gait.support_polygon import convex_hull
+from humanoid_control.tools.balance import BalanceEstimate
+from humanoid_control.tools.support_polygon import convex_hull
 
 # Minimum normal force [N] for a foot to count as loaded (about 10% of the robot weight).
 MIN_CONTACT_FORCE = 30.0
@@ -28,7 +29,8 @@ class FootWrench:
 
 
 def axial_to_plane(frame, vec) -> np.ndarray:
-    """Rotation vector / angular velocity -> right-handed [about forward, about left].
+    """
+    Rotation vector / angular velocity -> right-handed [about forward, about left].
 
     The plane axes need not form a right-handed basis in base coordinates (this robot's
     left foot is at base +x while it walks along +y), so axial vectors get the handedness
@@ -40,7 +42,8 @@ def axial_to_plane(frame, vec) -> np.ndarray:
 
 
 def cop_from_ankle_wrench(force, torque, ankle_to_sole: float) -> Optional[np.ndarray]:
-    """Centre of pressure (foot frame x, y) from the ankle wrench; None when unloaded.
+    """
+    Centre of pressure (foot frame x, y) from the ankle wrench; None when unloaded.
 
     The ratio is independent of the wrench sign convention (joint wrench on the foot or
     ground reaction), so the joint feedback can be used directly. Foot inertia is ignored.
@@ -103,7 +106,8 @@ class BalanceStateEstimator:
             self.joint_state[name] = (pos, vel, eff)
 
     def set_wrench(self, side: str, force, torque) -> None:
-        """Add a wrench sample; estimate() uses the mean of the samples since its last call.
+        """
+        Add a wrench sample; estimate() uses the mean of the samples since its last call.
 
         The sensors publish much faster than the control loop, and the stiff contact makes
         single samples noisy, so averaging over the loop period avoids aliasing.

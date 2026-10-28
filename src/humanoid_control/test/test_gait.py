@@ -1,13 +1,11 @@
 import numpy as np
 import pytest
 
-from humanoid_control.gait import (
-    FixedFootstepPlanner,
-    GaitParams,
-    SwingFootTrajectory,
-    WalkingPattern,
-)
-from humanoid_control.gait import lipm
+from humanoid_control.tools import lipm
+from humanoid_control.tools.footstep_planner import FixedFootstepPlanner
+from humanoid_control.tools.gait_params import GaitParams
+from humanoid_control.tools.swing_trajectory import SwingFootTrajectory
+from humanoid_control.tools.walking_pattern import WalkingPattern
 
 LEFT = np.array([0.0, 0.125, 0.075])
 RIGHT = np.array([0.0, -0.125, 0.075])
@@ -91,7 +89,8 @@ def test_zmp_moves_between_feet_during_dsp():
     half = pat.sample(t0 + 0.5 * td).zmp
     end = pat.sample(t0 + td + 1e-9).zmp
     np.testing.assert_allclose(start, planner.step(k - 1).stance, atol=1e-6)
-    np.testing.assert_allclose(half, 0.5 * (planner.step(k - 1).stance + planner.step(k).stance), atol=1e-6)
+    np.testing.assert_allclose(
+        half, 0.5 * (planner.step(k - 1).stance + planner.step(k).stance), atol=1e-6)
     np.testing.assert_allclose(end, planner.step(k).stance, atol=1e-6)
     # the swing foot only leaves the ground once the ZMP has reached the stance foot
     side = planner.step(k).swing_side

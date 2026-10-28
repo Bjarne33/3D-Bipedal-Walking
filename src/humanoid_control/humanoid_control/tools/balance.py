@@ -1,4 +1,5 @@
-"""Closed-loop balance stabiliser for humanoid_walk (pure Python, gait plane frame).
+"""
+Closed-loop balance stabiliser for humanoid_walk (pure Python, gait plane frame).
 
 Given the walking reference and the measured state it computes
 - the desired ZMP from DCM tracking: p_des = p_ref + K_xi (xi - xi_ref), clamped to the
@@ -17,7 +18,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from humanoid_control.gait.support_polygon import clamp_to_hull
+from humanoid_control.tools.support_polygon import clamp_to_hull
 
 GRAVITY = 9.81
 SIDES = ('left', 'right')
@@ -52,7 +53,8 @@ class BalanceOutput:
 
 
 def cop_shift_to_rotation(dp: np.ndarray) -> np.ndarray:
-    """Body rotation (about forward, about left) whose ankle torque moves the CoP by +dp.
+    """
+    Body rotation (about forward, about left) whose ankle torque moves the CoP by +dp.
 
     Tilting the body about +x (to the right) loads the left sole edge (CoP +y); tilting it
     about +y (forward) loads the heel (CoP -x).

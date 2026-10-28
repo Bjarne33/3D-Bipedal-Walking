@@ -17,17 +17,15 @@ setup(
     zip_safe=True,
     maintainer='bjarne',
     maintainer_email='grotelueschen@campus.tu-berlin.de',
-    description='TODO: Package description',
+    description='Startup, test motions and model-based walking for the humanoid biped.',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'humanoid_startup = humanoid_control.humanoid_startup:main',
-            'com_visualizer = humanoid_control.com_visualizer:main',
-            'humanoid_walking = humanoid_control.humanoid_walking:main',
-            'humanoid_walk = humanoid_control.humanoid_walk:main',
-            'gait_monitor = humanoid_control.gait_monitor:main',
-            'gait_check = humanoid_control.gait_check:main',
+            'humanoid_startup = humanoid_control.nodes.humanoid_startup:main',
+            'com_visualizer = humanoid_control.nodes.com_visualizer:main',
+            'humanoid_predefined_trajs = humanoid_control.nodes.humanoid_predefined_trajs:main',
+            'humanoid_walk = humanoid_control.nodes.humanoid_walk:main',
         ],
     },
 )
