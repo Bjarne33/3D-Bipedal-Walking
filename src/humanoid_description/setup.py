@@ -24,9 +24,10 @@ data_files = [
     ('share/ament_index/resource_index/packages',
         ['resource/humanoid_description']),
     ('share/humanoid_description', ['package.xml']),
+    ('share/humanoid_description/launch', ['launch/humanoid_rviz.launch.py']),
 ]
 
-for folder in ['urdf', 'launch', 'config', 'rviz', 'worlds']:
+for folder in ['urdf', 'config', 'rviz', 'worlds']:
     files = package_files(folder)
     for file in files:
         install_path = os.path.join('share/humanoid_description', os.path.dirname(file))

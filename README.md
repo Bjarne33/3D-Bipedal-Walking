@@ -115,9 +115,9 @@ source install/setup.bash
 Start the full simulation stack (Gazebo + robot spawn + controllers + RViz + control nodes):
 
 ```bash
-ros2 launch humanoid_description spawn_humanoid.launch.py
+ros2 launch humanoid_bringup spawn_humanoid.launch.py
 # Optional: pin the base in the air so the robot cannot fall (useful for inspecting motions)
-ros2 launch humanoid_description spawn_humanoid.launch.py floating:=true
+ros2 launch humanoid_bringup spawn_humanoid.launch.py floating:=true
 ```
 
 Run URDF/RViz-only visualization (without Gazebo):
@@ -144,7 +144,8 @@ ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_
 
 ```text
 src/
-  humanoid_description/   Xacro model, Gazebo world, controller config, RViz config, launch files
+  humanoid_bringup/       Full simulation launch, composing description and control packages
+  humanoid_description/   Xacro model, Gazebo world, controller config, RViz config and preview
   humanoid_interfaces/    Walk action, StepN service, BalanceState message
   humanoid_control/
     config/gait.yaml      Parameters of humanoid_walk
@@ -160,21 +161,31 @@ src/
 
 ## Package Overview
 
-### `humanoid_description`
+### `humanoid_bringup`
 
-Robot model and simulation assets.
+System-level launch composition. Depends on the description and control packages and the
+Gazebo, controller and visualization components needed to launch the simulation.
 
-- `urdf/`: Humanoid model as Xacro/URDF, including links, joints, inertia, transmissions, and `ros2_control` setup.
-- `config/ros2_control_controllers.yaml`: Controller configuration.
-- `config/gazebo_params.yaml`: Gazebo ROS node parameters (`/clock` published at 1000 Hz so sim-time control loops are not limited to the 10 Hz default).
-- `worlds/world.sdf`: Gazebo world file.
-- `rviz/urdf.rviz`: RViz configuration.
 - `launch/spawn_humanoid.launch.py`: Full simulation bring-up:
 	- Launches Gazebo.
 	- Publishes `robot_description`.
 	- Spawns the humanoid entity.
 	- Spawns `joint_state_broadcaster` and `effort_position_controller`.
 	- Starts RViz and control nodes from `humanoid_control`.
+
+The simulation launch has moved from `humanoid_description` to `humanoid_bringup`;
+its arguments, defaults and startup sequence are unchanged. The model-based walking node
+is still started separately using `ros2 launch humanoid_control walk.launch.py`.
+
+### `humanoid_description`
+
+Robot model and simulation assets; does not depend on the control or bringup packages.
+
+- `urdf/`: Humanoid model as Xacro/URDF, including links, joints, inertia, transmissions, and `ros2_control` setup.
+- `config/ros2_control_controllers.yaml`: Controller configuration.
+- `config/gazebo_params.yaml`: Gazebo ROS node parameters (`/clock` published at 1000 Hz so sim-time control loops are not limited to the 10 Hz default).
+- `worlds/world.sdf`: Gazebo world file.
+- `rviz/urdf.rviz`: RViz configuration.
 - `launch/humanoid_rviz.launch.py`: RViz/URDF preview workflow with joint state publisher.
 
 ### `humanoid_control`
@@ -228,5 +239,5 @@ source install/setup.bash
 Then launch:
 
 ```bash
-ros2 launch humanoid_description spawn_humanoid.launch.py
+ros2 launch humanoid_bringup spawn_humanoid.launch.py
 ```

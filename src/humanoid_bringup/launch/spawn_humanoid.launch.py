@@ -1,4 +1,4 @@
-"""Launch file that starts Gazebo, spawns the humanoid and starts the control nodes."""
+"""Launch Gazebo, spawn the humanoid and start the existing control nodes."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
