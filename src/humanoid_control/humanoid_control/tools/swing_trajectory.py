@@ -6,19 +6,36 @@ import numpy as np
 
 
 def min_jerk(s: float) -> Tuple[float, float]:
-    """Return (position, d/ds) of the minimum-jerk blend for s in [0, 1]."""
+    """Evaluate the minimum-jerk blend.
+
+    Args:
+        s: Normalised time in [0, 1].
+
+    Returns:
+        Tuple (position blend, derivative with respect to `s`).
+    """
     s = min(max(s, 0.0), 1.0)
     return 10 * s**3 - 15 * s**4 + 6 * s**5, 30 * s**2 - 60 * s**3 + 30 * s**4
 
 
 class SwingFootTrajectory:
-    """
-    Foot path from `start` to `target` (3D, same ground height) lasting `duration`.
+    """Foot path from `start` to `target` (3D, same ground height) lasting `duration`.
 
     Velocity and acceleration vanish at lift-off and touch-down in all axes.
     """
 
     def __init__(self, start, target, height: float, duration: float) -> None:
+        """Create the trajectory.
+
+        Args:
+            start: Start position (3,).
+            target: Target position (3,).
+            height: Peak swing height above the straight line.
+            duration: Swing duration in seconds.
+
+        Raises:
+            ValueError: If `duration` is not positive.
+        """
         if duration <= 0.0:
             raise ValueError('duration must be positive')
         self.start = np.asarray(start, float).reshape(3)
@@ -27,7 +44,14 @@ class SwingFootTrajectory:
         self.duration = float(duration)
 
     def sample(self, t: float) -> Tuple[np.ndarray, np.ndarray]:
-        """Return (position, velocity) at time `t` since lift-off (clamped to the duration)."""
+        """Sample the swing foot path.
+
+        Args:
+            t: Time since lift-off in seconds (clamped to the duration).
+
+        Returns:
+            Tuple (position, velocity).
+        """
         s = min(max(t / self.duration, 0.0), 1.0)
         blend, dblend = min_jerk(s)
         pos = self.start + (self.target - self.start) * blend

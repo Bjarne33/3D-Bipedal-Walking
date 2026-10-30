@@ -1,5 +1,4 @@
-"""
-Measured balance state for humanoid_walk (base ground truth + joint states + ankle FT).
+"""Measured balance state for humanoid_walk (base ground truth + joint states + ankle FT).
 
 The estimator keeps its own Pinocchio configuration and data so that it never disturbs the
 IK solver. All outputs are expressed in the gait plane frame of the walk (x forward, y left),
@@ -29,24 +28,37 @@ class FootWrench:
 
 
 def axial_to_plane(frame, vec) -> np.ndarray:
-    """
-    Rotation vector / angular velocity -> right-handed [about forward, about left].
+    """Rotation vector / angular velocity -> right-handed [about forward, about left].
 
     The plane axes need not form a right-handed basis in base coordinates (this robot's
     left foot is at base +x while it walks along +y), so axial vectors get the handedness
     sign; a positive rotation about forward then always tilts the body to the right
     (towards -y) and a positive rotation about left tilts it forward.
+
+    Args:
+        frame: Plane frame of the gait.
+        vec: Rotation vector or angular velocity (3,) in the base frame.
+
+    Returns:
+        The vector as [about forward, about left].
     """
     handed = np.sign(np.cross(frame.forward, frame.left) @ frame.up)
     return handed * frame.to_plane(np.asarray(vec, float))[:2]
 
 
 def cop_from_ankle_wrench(force, torque, ankle_to_sole: float) -> Optional[np.ndarray]:
-    """
-    Centre of pressure (foot frame x, y) from the ankle wrench; None when unloaded.
+    """Centre of pressure (foot frame x, y) from the ankle wrench; None when unloaded.
 
     The ratio is independent of the wrench sign convention (joint wrench on the foot or
     ground reaction), so the joint feedback can be used directly. Foot inertia is ignored.
+
+    Args:
+        force: Ankle force (3,).
+        torque: Ankle torque (3,).
+        ankle_to_sole: Distance from the ankle to the sole in metres.
+
+    Returns:
+        CoP (x, y) in the foot frame, or None when the foot is unloaded.
     """
     fz = float(force[2])
     if abs(fz) < MIN_CONTACT_FORCE:
@@ -61,6 +73,11 @@ class BalanceStateEstimator:
     """Measured CoM, DCM, ZMP, support polygon and tilt in the gait plane frame."""
 
     def __init__(self, alpha: float = 1.0) -> None:
+        """Create the estimator.
+
+        Args:
+            alpha: Low-pass filter coefficient in [0, 1]; 1 means no filtering.
+        """
         self.alpha = float(alpha)
         self.base_world: Optional[pin.SE3] = None
         self.base_vel_world = np.zeros(3)
@@ -79,7 +96,14 @@ class BalanceStateEstimator:
 
     # ------------------------------------------------------------------ inputs
     def set_base(self, base_world: pin.SE3, stamp: float, lin_vel=None, ang_vel=None) -> None:
-        """Set the base pose in the world, optionally with its world-frame velocities."""
+        """Set the base pose in the world, optionally with its world-frame velocities.
+
+        Args:
+            base_world: Base pose in the world frame.
+            stamp: Timestamp of the pose in seconds.
+            lin_vel: Linear velocity (3,) in the world frame, or None.
+            ang_vel: Angular velocity (3,) in the world frame, or None.
+        """
         self.base_world = base_world
         self.base_time = float(stamp)
         if lin_vel is not None:
@@ -88,7 +112,11 @@ class BalanceStateEstimator:
             self.base_omega_world = np.asarray(ang_vel, float)
 
     def set_walk_reference_frame(self) -> bool:
-        """Anchor the plane frame at the current measured base pose; False if unknown."""
+        """Anchor the plane frame at the current measured base pose.
+
+        Returns:
+            True if anchored, False if no base pose is known.
+        """
         self._com_vel = None
         if self.base_world is None:
             self.ref_world = None
@@ -97,6 +125,14 @@ class BalanceStateEstimator:
         return True
 
     def set_joint_state(self, names, positions, velocities=None, efforts=None) -> None:
+        """Store the latest joint measurements.
+
+        Args:
+            names: Joint names.
+            positions: Joint positions, aligned with `names`.
+            velocities: Joint velocities, aligned with `names`; missing entries are 0.
+            efforts: Joint efforts, aligned with `names`; missing entries are 0.
+        """
         velocities = velocities if velocities is not None else []
         efforts = efforts if efforts is not None else []
         for i, name in enumerate(names):
@@ -106,11 +142,15 @@ class BalanceStateEstimator:
             self.joint_state[name] = (pos, vel, eff)
 
     def set_wrench(self, side: str, force, torque) -> None:
-        """
-        Add a wrench sample; estimate() uses the mean of the samples since its last call.
+        """Add a wrench sample; estimate() uses the mean of the samples since its last call.
 
         The sensors publish much faster than the control loop, and the stiff contact makes
         single samples noisy, so averaging over the loop period avoids aliasing.
+
+        Args:
+            side: 'left' or 'right'.
+            force: Ankle force (3,).
+            torque: Ankle torque (3,).
         """
         with self._wrench_lock:
             acc = self._wrench_sums.setdefault(side, [np.zeros(3), np.zeros(3), 0])
@@ -119,6 +159,7 @@ class BalanceStateEstimator:
             acc[2] += 1
 
     def _consume_wrenches(self) -> None:
+        """Average the wrench samples collected since the last estimate and reset them."""
         with self._wrench_lock:
             for side, (force, torque, n) in self._wrench_sums.items():
                 if n > 0:
@@ -127,6 +168,11 @@ class BalanceStateEstimator:
 
     # ------------------------------------------------------------------ helpers
     def _bind(self, kin) -> None:
+        """(Re)create the private Pinocchio data when the kinematics model changes.
+
+        Args:
+            kin: Kinematics object providing the model.
+        """
         if self._model is not kin.model:
             self._model = kin.model
             self._data = kin.model.createData()
@@ -134,13 +180,33 @@ class BalanceStateEstimator:
             self._v = np.zeros(kin.model.nv)
 
     def _plane_rotvec(self, frame, rotation_world: np.ndarray) -> np.ndarray:
-        """Rotation (relative to the walk-start base) as [about forward, about left]."""
+        """Compute the rotation of a world-frame rotation relative to the walk-start base.
+
+        Args:
+            frame: Plane frame of the gait.
+            rotation_world: Rotation matrix in the world frame.
+
+        Returns:
+            Rotation as [about forward, about left].
+        """
         return axial_to_plane(frame, pin.log3(self.ref_world.rotation.T @ rotation_world))
 
     # ------------------------------------------------------------------ estimate
     def estimate(self, kin, frame, ground_height: float, contact_tol: float, omega: float,
                  ankle_to_sole: float) -> Optional[BalanceEstimate]:
-        """Return the measured balance state, or None before the base pose is known."""
+        """Return the measured balance state.
+
+        Args:
+            kin: Kinematics object holding the current model.
+            frame: Plane frame of the gait.
+            ground_height: Ground height in the plane frame.
+            contact_tol: Height tolerance below which a foot counts as in contact.
+            omega: LIPM natural frequency in rad/s.
+            ankle_to_sole: Distance from the ankle to the sole in metres.
+
+        Returns:
+            The balance estimate, or None before the base pose is known.
+        """
         if self.base_world is None or self.ref_world is None:
             return None
         self._bind(kin)

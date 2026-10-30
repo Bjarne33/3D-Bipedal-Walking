@@ -22,12 +22,21 @@ class FootPose:
 
 @dataclass
 class KinematicsResult:
+    """CoM position and foot poses in the base frame."""
+
     com: np.ndarray
     feet: Dict[str, FootPose]
 
 
 def expand_xacro_to_urdf(xacro_path: str) -> str:
-    """Expand a xacro file into a temporary URDF file and return its path."""
+    """Expand a xacro file into a temporary URDF file.
+
+    Args:
+        xacro_path: Path to the xacro file.
+
+    Returns:
+        Path of the temporary URDF file; the caller removes it.
+    """
     import xacro
 
     urdf_xml = xacro.process_file(xacro_path).toprettyxml(indent="  ")
@@ -37,7 +46,15 @@ def expand_xacro_to_urdf(xacro_path: str) -> str:
 
 
 def sole_corners_from_urdf(urdf_path: str, link: str) -> Optional[np.ndarray]:
-    """Bottom corners (4, 3) of the box collision of `link` in the link frame, or None."""
+    """Find the bottom corners of a link's box collision geometry.
+
+    Args:
+        urdf_path: Path to the URDF file.
+        link: Link name.
+
+    Returns:
+        Corners (4, 3) in the link frame, or None if the link has no box collision.
+    """
     import xml.etree.ElementTree as ET
 
     for elem in ET.parse(urdf_path).getroot().iter("link"):
@@ -61,8 +78,7 @@ def sole_corners_from_urdf(urdf_path: str, link: str) -> Optional[np.ndarray]:
 
 
 class HumanoidKinematics:
-    """
-    Loads the robot URDF via Pinocchio and provides kinematics.
+    """Loads the robot URDF via Pinocchio and provides kinematics.
 
     Provides forward kinematics (CoM and foot poses) and differential inverse
     kinematics (multi-task, solved with Pink) for walking control.
@@ -85,6 +101,15 @@ class HumanoidKinematics:
     DEFAULT_FOOT_FRAMES = {"left": "left_foot_link", "right": "right_foot_link"}
 
     def __init__(self, urdf_path: str, foot_frames: Optional[Mapping[str, str]] = None):
+        """Load the model and set up the inverse kinematics.
+
+        Args:
+            urdf_path: Path to the URDF file.
+            foot_frames: Foot frame name per side; defaults to `DEFAULT_FOOT_FRAMES`.
+
+        Raises:
+            ValueError: If a foot frame is not found in the model.
+        """
         self.urdf_path = urdf_path
         self.model = pin.buildModelFromUrdf(urdf_path, pin.JointModelFreeFlyer())
         self.data = self.model.createData()
@@ -107,6 +132,15 @@ class HumanoidKinematics:
 
     @classmethod
     def from_xacro(cls, xacro_path: str, foot_frames: Optional[Mapping[str, str]] = None):
+        """Create the kinematics from a xacro file.
+
+        Args:
+            xacro_path: Path to the xacro file.
+            foot_frames: Foot frame name per side; defaults to `DEFAULT_FOOT_FRAMES`.
+
+        Returns:
+            The kinematics instance.
+        """
         urdf_path = expand_xacro_to_urdf(xacro_path)
         try:
             return cls(urdf_path, foot_frames)
@@ -114,7 +148,12 @@ class HumanoidKinematics:
             os.remove(urdf_path)
 
     def set_joint_positions(self, names, positions) -> None:
-        """Update the 1-DoF joints in the configuration; unknown names are ignored."""
+        """Update the 1-DoF joints in the configuration; unknown names are ignored.
+
+        Args:
+            names: Joint names.
+            positions: Joint positions, aligned with `names`.
+        """
         for name, pos in zip(names, positions):
             jid = self.joint_name_to_id.get(name)
             if jid is None or self.model.joints[jid].nq != 1:
@@ -122,12 +161,23 @@ class HumanoidKinematics:
             self.q[self.model.idx_qs[jid]] = pos
 
     def forward_kinematics(self, joint_positions: Mapping[str, float]) -> KinematicsResult:
-        """Compute CoM and foot poses (in the base frame) from joint positions."""
+        """Compute CoM and foot poses (in the base frame) from joint positions.
+
+        Args:
+            joint_positions: Position per joint name.
+
+        Returns:
+            The CoM and foot poses.
+        """
         self.set_joint_positions(joint_positions.keys(), joint_positions.values())
         return self.compute()
 
     def compute(self) -> KinematicsResult:
-        """Run FK on the current configuration `self.q`."""
+        """Run FK on the current configuration `self.q`.
+
+        Returns:
+            The CoM and foot poses in the base frame.
+        """
         pin.forwardKinematics(self.model, self.data, self.q)
         pin.updateFramePlacements(self.model, self.data)
         com = np.array(pin.centerOfMass(self.model, self.data, self.q))
@@ -143,7 +193,14 @@ class HumanoidKinematics:
         return KinematicsResult(com=com, feet=feet)
 
     def joint_axes(self, names) -> np.ndarray:
-        """Rotation axes (rows, base frame) of 1-DoF joints at the configuration `self.q`."""
+        """Compute rotation axes of 1-DoF joints at the configuration `self.q`.
+
+        Args:
+            names: Joint names.
+
+        Returns:
+            Rotation axes, one row per joint, in the base frame.
+        """
         data = self.model.createData()
         pin.computeJointJacobians(self.model, data, self.q)
         axes = []
@@ -154,10 +211,12 @@ class HumanoidKinematics:
         return np.array(axes)
 
     def link_coms(self):
-        """
-        Return (joint_name, CoM position in base frame) per joint body.
+        """Return (joint_name, CoM position in base frame) per joint body.
 
         Call after `compute()` / `forward_kinematics()`.
+
+        Returns:
+            List of (joint_name, CoM position in the base frame) tuples.
         """
         return [
             (self.model.names[jid], self.data.oMi[jid].act(self.model.inertias[jid].lever))
@@ -168,8 +227,7 @@ class HumanoidKinematics:
     # Inverse kinematics (Pink)
     # ------------------------------------------------------------------
     def _init_ik(self) -> None:
-        """
-        Create the Pink configuration and the IK tasks.
+        """Create the Pink configuration and the IK tasks.
 
         The configuration at construction time is the nominal standing pose
         that the posture task regularizes towards.
@@ -216,10 +274,9 @@ class HumanoidKinematics:
 
     def compute_ik_step(self, stance_frame, stance_pose, swing_frame, swing_pose,
                         com_target, dt=0.02) -> np.ndarray:
-        """
-        Run one differential IK step and return the updated configuration.
+        """Run one differential IK step and return the updated configuration.
 
-        Inputs:
+        Args:
             stance_frame: Support foot frame name (e.g. 'left_foot_link').
             stance_pose: Desired `pin.SE3` of the stance foot (world frame).
             swing_frame: Swing foot frame name.
@@ -227,7 +284,7 @@ class HumanoidKinematics:
             com_target: Desired CoM position, (3,) array (world frame).
             dt: Integration time step [s].
 
-        Result:
+        Returns:
             The configuration vector `self.configuration.q`. If the inputs are
             invalid or the QP fails, the configuration is left unchanged.
         """
@@ -275,7 +332,20 @@ class HumanoidKinematics:
 
     def inverse_kinematics(self, stance_frame, stance_pose, swing_frame, swing_pose,
                            com_target, dt=0.02, iterations=1) -> np.ndarray:
-        """Solve IK towards the given targets using `iterations` Pink steps."""
+        """Solve IK towards the given targets using `iterations` Pink steps.
+
+        Args:
+            stance_frame: Support foot frame name.
+            stance_pose: Desired `pin.SE3` of the stance foot.
+            swing_frame: Swing foot frame name.
+            swing_pose: Desired `pin.SE3` of the swing foot.
+            com_target: Desired CoM position (3,).
+            dt: Integration time step in seconds.
+            iterations: Number of IK steps (at least 1).
+
+        Returns:
+            The resulting configuration vector.
+        """
         q = self.configuration.q
         for _ in range(max(1, int(iterations))):
             q = self.compute_ik_step(

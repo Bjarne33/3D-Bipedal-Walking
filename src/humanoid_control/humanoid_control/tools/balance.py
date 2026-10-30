@@ -1,5 +1,4 @@
-"""
-Closed-loop balance stabiliser for humanoid_walk (pure Python, gait plane frame).
+"""Closed-loop balance stabiliser for humanoid_walk (pure Python, gait plane frame).
 
 Given the walking reference and the measured state it computes
 - the desired ZMP from DCM tracking: p_des = p_ref + K_xi (xi - xi_ref), clamped to the
@@ -42,6 +41,8 @@ class BalanceEstimate:
 
 @dataclass
 class BalanceOutput:
+    """Result of one balance update (desired ZMP, errors and the corrections to apply)."""
+
     zmp_des: np.ndarray = field(default_factory=lambda: np.zeros(2))
     dcm_error: np.ndarray = field(default_factory=lambda: np.zeros(2))
     saturated: bool = False
@@ -53,11 +54,16 @@ class BalanceOutput:
 
 
 def cop_shift_to_rotation(dp: np.ndarray) -> np.ndarray:
-    """
-    Body rotation (about forward, about left) whose ankle torque moves the CoP by +dp.
+    """Body rotation (about forward, about left) whose ankle torque moves the CoP by +dp.
 
     Tilting the body about +x (to the right) loads the left sole edge (CoP +y); tilting it
     about +y (forward) loads the heel (CoP -x).
+
+    Args:
+        dp: Desired CoP shift (x, y).
+
+    Returns:
+        Body rotation [about forward, about left].
     """
     return np.array([dp[1], -dp[0]])
 
@@ -66,23 +72,57 @@ class BalanceController:
     """DCM feedback + CoM admittance + foot damping + torso feedback."""
 
     def __init__(self, params) -> None:
+        """Initialise the controller state.
+
+        Args:
+            params: Gait parameters (`GaitParams`) holding the balance gains.
+        """
         self.p = params
         self.omega = float(np.sqrt(GRAVITY / params.com_height))
         self.com_offset = np.zeros(2)
         self.ankle_rotation = {s: np.zeros(2) for s in SIDES}
 
     def reset(self) -> None:
+        """Clear the accumulated CoM offset and ankle rotations."""
         self.com_offset[:] = 0.0
         for s in SIDES:
             self.ankle_rotation[s][:] = 0.0
 
     def dcm_reference(self, ref) -> np.ndarray:
+        """Compute the reference divergent component of motion.
+
+        Args:
+            ref: Walking reference with the planned CoM position and velocity.
+
+        Returns:
+            Reference DCM (x, y).
+        """
         return np.asarray(ref.com[:2], float) + np.asarray(ref.com_vel[:2], float) / self.omega
 
     def _leak(self, value: np.ndarray, tau: float, dt: float) -> np.ndarray:
+        """Apply a first-order leak towards zero.
+
+        Args:
+            value: Value to decay.
+            tau: Time constant in seconds; non-positive means reset to zero.
+            dt: Time step in seconds.
+
+        Returns:
+            The decayed value.
+        """
         return value * max(0.0, 1.0 - dt / tau) if tau > 0.0 else value * 0.0
 
     def update(self, ref, est: BalanceEstimate, dt: float) -> BalanceOutput:
+        """Compute the balance corrections for one control step.
+
+        Args:
+            ref: Walking reference for the current time.
+            est: Estimated balance state (CoM, DCM, support hull, ...).
+            dt: Time step in seconds.
+
+        Returns:
+            The desired ZMP and the corrections to apply.
+        """
         p = self.p
         out = BalanceOutput(zmp_des=np.array(ref.zmp[:2], float))
         out.dcm_error = est.dcm - self.dcm_reference(ref)

@@ -1,3 +1,5 @@
+"""Node that waits for the controllers and commands the initial standing pose."""
+
 import time
 from enum import Enum
 
@@ -12,6 +14,7 @@ from humanoid_control.tools.joints import JOINT_NAMES, STANDING_POSE
 
 
 class StartupState(Enum):
+    """States of the startup sequence."""
     WAIT_FOR_CONTROLLERS = 0
     PAUSE_SIM = 1
     SEND_POSE = 2
@@ -21,8 +24,10 @@ class StartupState(Enum):
 
 
 class HumanoidStartupManager(Node):
+    """Run the startup sequence: wait for controllers, pause, send the pose, unpause."""
 
     def __init__(self):
+        """Declare parameters and create the clients, publisher, subscription and timer."""
         super().__init__('humanoid_startup_manager')
 
         # ---------------- Parameters ----------------
@@ -82,6 +87,7 @@ class HumanoidStartupManager(Node):
     # ============================================================
 
     def update(self):
+        """Advance the startup state machine; fail on timeout."""
         if (self.state != StartupState.READY and self.timeout_exceeded()):
             self.fail("Startup timeout exceeded")
             return
@@ -117,6 +123,11 @@ class HumanoidStartupManager(Node):
     # ============================================================
 
     def controllers_active(self):
+        """Query the controller manager for the required controllers.
+
+        Returns:
+            True once the joint-state broadcaster and trajectory controller are active.
+        """
         if not self.cm_list_client.service_is_ready():
             self.get_logger().info("Controller manager service not ready")
             return False
@@ -157,7 +168,11 @@ class HumanoidStartupManager(Node):
         )
 
     def pose_reached(self):
+        """Check whether the joints are within tolerance of the initial pose.
 
+        Returns:
+            True if every joint is within tolerance of its target position.
+        """
         if self.current_joint_state is None:
             return False
 
@@ -178,6 +193,7 @@ class HumanoidStartupManager(Node):
     # ============================================================
 
     def send_initial_pose(self):
+        """Publish the standing-pose trajectory."""
         msg = JointTrajectory()
         msg.joint_names = self.joint_names
 
@@ -191,11 +207,13 @@ class HumanoidStartupManager(Node):
         self.get_logger().info("Initial pose command sent")
 
     def pause_sim(self):
+        """Pause the Gazebo simulation."""
         if self.pause_client.wait_for_service(timeout_sec=1.0):
             self.pause_client.call_async(Empty.Request())
             self.get_logger().info("Simulation paused")
 
     def unpause_sim(self):
+        """Unpause the Gazebo simulation."""
         if self.unpause_client.wait_for_service(timeout_sec=1.0):
             self.unpause_client.call_async(Empty.Request())
             self.get_logger().info("Simulation unpaused")
@@ -205,15 +223,30 @@ class HumanoidStartupManager(Node):
     # ============================================================
 
     def joint_state_callback(self, msg):
+        """Store the latest joint state.
+
+        Args:
+            msg: Latest joint states.
+        """
         self.current_joint_state = msg
 
     def timeout_exceeded(self):
+        """Check whether the startup timeout has elapsed.
+
+        Returns:
+            True if more than `timeout_sec` has passed since startup began.
+        """
         elapsed = (
             self.get_clock().now() - self.start_time
         ).nanoseconds * 1e-9
         return elapsed > self.timeout_sec
 
     def fail(self, reason):
+        """Log an error and enter the error state.
+
+        Args:
+            reason: Error message to log.
+        """
         self.get_logger().error(reason)
         self.state = StartupState.ERROR
 
@@ -223,6 +256,11 @@ class HumanoidStartupManager(Node):
 # ============================================================
 
 def main(args=None):
+    """Run the startup manager node.
+
+    Args:
+        args: Optional command-line arguments passed to `rclpy.init`.
+    """
     rclpy.init(args=args)
     node = HumanoidStartupManager()
     rclpy.spin(node)

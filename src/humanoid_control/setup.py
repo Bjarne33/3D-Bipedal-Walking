@@ -1,3 +1,5 @@
+"""Package setup for humanoid_control."""
+
 from setuptools import find_packages, setup
 
 package_name = 'humanoid_control'

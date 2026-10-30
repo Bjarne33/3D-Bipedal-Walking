@@ -1,5 +1,4 @@
-"""
-Walking node: footstep plan -> LIPM CoM + swing foot -> Pink IK -> joint trajectory.
+"""Walking node: footstep plan -> LIPM CoM + swing foot -> Pink IK -> joint trajectory.
 
 Start a walk with the `humanoid_interfaces/action/Walk` action on `/humanoid_walk/walk`
 (`num_steps` > 0: that many steps plus a closing step; `num_steps` = 0: walk until canceled).
@@ -40,7 +39,10 @@ from humanoid_interfaces.msg import BalanceState
 
 
 class HumanoidWalk(Node):
+    """Model-based walking node exposing the walk action and stop service."""
+
     def __init__(self) -> None:
+        """Declare gait parameters, load the model and create the action, services and I/O."""
         super().__init__('humanoid_walk')
 
         self.declare_parameter('controller_name', 'effort_position_controller')
@@ -123,11 +125,21 @@ class HumanoidWalk(Node):
 
     # ------------------------------------------------------------------ callbacks
     def _joint_state_cb(self, msg: JointState) -> None:
+        """Cache joint positions and forward the joint state to the estimator.
+
+        Args:
+            msg: Latest joint states.
+        """
         for name, position in zip(msg.name, msg.position):
             self.joint_positions[name] = position
         self.estimator.set_joint_state(msg.name, msg.position, msg.velocity, msg.effort)
 
     def _odom_cb(self, msg: Odometry) -> None:
+        """Forward the ground-truth base pose and twist to the estimator.
+
+        Args:
+            msg: Base odometry from the Gazebo p3d plugin.
+        """
         pose, twist = msg.pose.pose, msg.twist.twist
         base = pin.XYZQUATToSE3(np.array([
             pose.position.x, pose.position.y, pose.position.z,
@@ -141,6 +153,11 @@ class HumanoidWalk(Node):
         )
 
     def _left_ft_cb(self, msg: WrenchStamped) -> None:
+        """Forward the left ankle force/torque sample to the estimator.
+
+        Args:
+            msg: Left ankle wrench.
+        """
         self.estimator.set_wrench(
             'left',
             [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
@@ -148,6 +165,11 @@ class HumanoidWalk(Node):
         )
 
     def _right_ft_cb(self, msg: WrenchStamped) -> None:
+        """Forward the right ankle force/torque sample to the estimator.
+
+        Args:
+            msg: Right ankle wrench.
+        """
         self.estimator.set_wrench(
             'right',
             [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
@@ -155,15 +177,37 @@ class HumanoidWalk(Node):
         )
 
     def _have_all_joints(self) -> bool:
+        """Check whether a position is known for every controlled joint.
+
+        Returns:
+            True if all joint positions have been received.
+        """
         return all(name in self.joint_positions for name in JOINT_NAMES)
 
     def _stop_cb(self, _req, response):
+        """Handle `/humanoid_walk/stop`: request a graceful stop at the next step boundary.
+
+        Args:
+            _req: Unused trigger request.
+            response: Response to fill in.
+
+        Returns:
+            The response; `success` is True if a walk was running.
+        """
         self.stop_requested.set()
         response.success = self.walking
         response.message = 'stopping at next step' if self.walking else 'not walking'
         return response
 
     def _goal_cb(self, _goal) -> GoalResponse:
+        """Accept a walk goal unless joint states are incomplete or a walk is running.
+
+        Args:
+            _goal: Unused goal request.
+
+        Returns:
+            ACCEPT or REJECT.
+        """
         if not self._have_all_joints():
             self.get_logger().warn('Goal rejected: joint states incomplete')
             return GoalResponse.REJECT
@@ -175,16 +219,34 @@ class HumanoidWalk(Node):
         return GoalResponse.ACCEPT
 
     def _cancel_cb(self, _goal) -> CancelResponse:
+        """Accept a cancel request and ask the walk to close the feet at the next step.
+
+        Args:
+            _goal: Unused goal handle.
+
+        Returns:
+            Always ACCEPT.
+        """
         self.stop_requested.set()
         return CancelResponse.ACCEPT
 
     # ------------------------------------------------------------------ setup
     def _plan_config(self) -> dict:
+        """Collect the planning-related ROS parameters.
+
+        Returns:
+            Parameter values by name, as expected by `plan_walk`.
+        """
         names = ['forward_axis', 'first_swing', 'ankle_to_sole', 'step_width', 'com_height']
         names += [f.name for f in dataclasses.fields(GaitParams)]
         return {name: self.get_parameter(name).value for name in names}
 
     def _init_kinematics(self):
+        """Reset the kinematics to the measured joint positions and the IK state.
+
+        Returns:
+            Tuple of the kinematics object and the resulting standing `KinematicsResult`.
+        """
         kin = self.kinematics
         kin.q = pin.neutral(kin.model)
         kin.set_joint_positions(self.joint_positions.keys(), self.joint_positions.values())
@@ -192,6 +254,16 @@ class HumanoidWalk(Node):
         return kin, kin.compute()
 
     def _apply_joint_offsets(self, q: np.ndarray, maps, out) -> np.ndarray:
+        """Add the balance ankle and torso rotations as joint offsets to an IK solution.
+
+        Args:
+            q: Configuration from the inverse kinematics.
+            maps: Per side and joint group mapping from body rotation to joint offsets.
+            out: Balance output holding the ankle and torso rotations.
+
+        Returns:
+            A copy of `q` with the offsets applied.
+        """
         offsets = {}
         for side, rot in out.ankle_rotation.items():
             joints, m = maps[side]['ankle']
@@ -206,6 +278,15 @@ class HumanoidWalk(Node):
         return q
 
     def _publish_balance_state(self, ref, est, out, balance, enabled):
+        """Publish reference, measured and commanded balance quantities for debugging.
+
+        Args:
+            ref: Walking reference at the current time.
+            est: Balance estimate, or None if unavailable.
+            out: Balance controller output, or None if balance is inactive.
+            balance: Balance controller (used for the reference DCM).
+            enabled: Whether balance feedback is active.
+        """
         msg = BalanceState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.step_index = int(ref.step_index)
@@ -244,6 +325,12 @@ class HumanoidWalk(Node):
         self.balance_pub.publish(msg)
 
     def _publish_joints(self, q: np.ndarray, q_prev: Optional[np.ndarray]) -> None:
+        """Publish a single-point joint trajectory for the actuated joints.
+
+        Args:
+            q: Target configuration.
+            q_prev: Previous configuration used for finite-difference velocities, or None.
+        """
         kin = self.kinematics
         idx = [kin.model.idx_qs[kin.joint_name_to_id[n]] for n in JOINT_NAMES]
         msg = JointTrajectory()
@@ -261,9 +348,26 @@ class HumanoidWalk(Node):
     # ------------------------------------------------------------------ walking
     @staticmethod
     def _is_closing(pattern, ref) -> bool:
+        """Check whether the reference is in the final (closing) step of a finite pattern.
+
+        Args:
+            pattern: Walking pattern.
+            ref: Walking reference at the current time.
+
+        Returns:
+            True if the pattern is finite and `ref` is in its last step or later.
+        """
         return pattern.num_steps is not None and ref.step_index >= pattern.num_steps - 1
 
     def _execute(self, goal_handle):
+        """Execute a walk goal, aborting it on errors and releasing the walking flag.
+
+        Args:
+            goal_handle: Action goal handle.
+
+        Returns:
+            The `Walk.Result`.
+        """
         result = Walk.Result()
         try:
             return self._walk(goal_handle, result)
@@ -279,6 +383,15 @@ class HumanoidWalk(Node):
                 self.walking = False
 
     def _walk(self, goal_handle, result):
+        """Run the walking control loop: plan, sample references, solve IK and publish.
+
+        Args:
+            goal_handle: Action goal handle.
+            result: Result object to fill in.
+
+        Returns:
+            The filled `Walk.Result`.
+        """
         self.stop_requested.clear()
         num_steps = int(goal_handle.request.num_steps)
         kin, standing = self._init_kinematics()
@@ -378,6 +491,11 @@ class HumanoidWalk(Node):
 
 
 def main(args=None) -> None:
+    """Run the walking node with a multi-threaded executor.
+
+    Args:
+        args: Optional command-line arguments passed to `rclpy.init`.
+    """
     rclpy.init(args=args)
     node = HumanoidWalk()
     executor = MultiThreadedExecutor()

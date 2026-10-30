@@ -1,5 +1,4 @@
-"""
-Analytic linear inverted pendulum (LIPM) helpers using the divergent component of motion (DCM).
+"""Analytic linear inverted pendulum (LIPM) helpers using the divergent component of motion (DCM).
 
 With omega = sqrt(g / z_c) and ZMP p the LIPM is  c'' = omega^2 (c - p).  The DCM
 xi = c + c'/omega obeys xi' = omega (xi - p). Planning the DCM backwards from a terminal
@@ -18,16 +17,45 @@ from humanoid_control.tools.gait_params import GRAVITY
 
 
 def omega(com_height: float) -> float:
+    """Compute the LIPM natural frequency.
+
+    Args:
+        com_height: Constant CoM height in metres.
+
+    Returns:
+        sqrt(g / com_height) in rad/s.
+    """
     return math.sqrt(GRAVITY / com_height)
 
 
 def dcm_back_const(xi_end, stance, duration: float, w: float):
-    """DCM at the start of a segment with constant ZMP `stance`, given the DCM at its end."""
+    """DCM at the start of a segment with constant ZMP `stance`, given the DCM at its end.
+
+    Args:
+        xi_end: DCM at the end of the segment.
+        stance: Constant ZMP during the segment.
+        duration: Segment duration in seconds.
+        w: LIPM natural frequency in rad/s.
+
+    Returns:
+        DCM at the start of the segment.
+    """
     return stance + (xi_end - stance) * math.exp(-w * duration)
 
 
 def dcm_back_linear(xi_end, zmp_start, zmp_end, duration: float, w: float):
-    """DCM at the start of a segment whose ZMP moves linearly from `zmp_start` to `zmp_end`."""
+    """DCM at the start of a segment whose ZMP moves linearly from `zmp_start` to `zmp_end`.
+
+    Args:
+        xi_end: DCM at the end of the segment.
+        zmp_start: ZMP at the start of the segment.
+        zmp_end: ZMP at the end of the segment.
+        duration: Segment duration in seconds.
+        w: LIPM natural frequency in rad/s.
+
+    Returns:
+        DCM at the start of the segment.
+    """
     if duration <= 0.0:
         return xi_end
     slope = (zmp_end - zmp_start) / duration
@@ -35,10 +63,18 @@ def dcm_back_linear(xi_end, zmp_start, zmp_end, duration: float, w: float):
 
 
 def linear_zmp_state(c0, v0, zmp_start, slope, w: float, t: float) -> Tuple:
-    """
-    Compute the CoM state after `t` s with ZMP p(t) = zmp_start + slope * t (exact LIPM solution).
+    """Compute the CoM state after `t` s for ZMP p(t) = zmp_start + slope * t (exact LIPM).
 
-    Result: (position, velocity, acceleration, zmp).
+    Args:
+        c0: Initial CoM position.
+        v0: Initial CoM velocity.
+        zmp_start: ZMP at t = 0.
+        slope: ZMP velocity.
+        w: LIPM natural frequency in rad/s.
+        t: Elapsed time in seconds.
+
+    Returns:
+        (position, velocity, acceleration, zmp).
     """
     d0 = c0 - zmp_start
     dv0 = v0 - slope
@@ -50,7 +86,21 @@ def linear_zmp_state(c0, v0, zmp_start, slope, w: float, t: float) -> Tuple:
 
 
 def quintic(p0, v0, a0, p1, v1, a1, duration: float, t: float) -> Tuple:
-    """Quintic polynomial through (p0, v0, a0) -> (p1, v1, a1); returns (pos, vel, acc) at `t`."""
+    """Evaluate a quintic polynomial through (p0, v0, a0) -> (p1, v1, a1).
+
+    Args:
+        p0: Initial position.
+        v0: Initial velocity.
+        a0: Initial acceleration.
+        p1: Final position.
+        v1: Final velocity.
+        a1: Final acceleration.
+        duration: Duration in seconds.
+        t: Evaluation time in seconds.
+
+    Returns:
+        Tuple (position, velocity, acceleration) at `t`.
+    """
     T = duration
     t = min(max(t, 0.0), T)
     p0, v0, a0, p1, v1, a1 = (np.asarray(x, float) for x in (p0, v0, a0, p1, v1, a1))

@@ -19,5 +19,10 @@ import pytest
 @pytest.mark.linter
 @pytest.mark.pep257
 def test_pep257():
-    rc = main(argv=['.', 'test'])
-    assert rc == 0, 'Found code style errors / warnings'
+    # Sources need full docstrings; test functions are documented by their names.
+    rc = main(argv=['--convention', 'google', '--', 'humanoid_description', 'launch', 'setup.py'])
+    rc_tests = main(argv=[
+        '--convention', 'google',
+        '--add-ignore', 'D100', 'D101', 'D102', 'D103', 'D104', 'D105', 'D107',
+        '--', 'test'])
+    assert rc == 0 and rc_tests == 0, 'Found code style errors / warnings'

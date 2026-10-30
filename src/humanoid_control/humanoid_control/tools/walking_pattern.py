@@ -1,5 +1,4 @@
-"""
-Walking pattern: combines the footstep plan, LIPM CoM and swing-foot trajectories.
+"""Walking pattern: combines the footstep plan, LIPM CoM and swing-foot trajectories.
 
 Timeline of a pattern (all times relative to the start of the pattern):
   0. optional quasi-static lead-in (`shift_time` + `hold_time`): the CoM is moved slowly (quintic,
@@ -28,6 +27,8 @@ from humanoid_control.tools.swing_trajectory import SwingFootTrajectory
 
 @dataclass
 class WalkingReference:
+    """Reference state of the walk at one time instant."""
+
     t: float
     com: np.ndarray  # (3,)
     com_vel: np.ndarray  # (3,)
@@ -44,6 +45,8 @@ class WalkingReference:
 
 @dataclass
 class _Segment:
+    """CoM/ZMP boundary conditions of one step's LIPM segment."""
+
     c0: np.ndarray  # CoM at the start of the step
     v0: np.ndarray  # CoM velocity at the start of the step
     zmp_start: np.ndarray  # ZMP at the start of the step (previous stance foot)
@@ -51,6 +54,8 @@ class _Segment:
 
 
 class WalkingPattern:
+    """Time-parameterised CoM, ZMP and foot references for a planned walk."""
+
     def __init__(
         self,
         params: GaitParams,
@@ -62,16 +67,19 @@ class WalkingPattern:
         pre_time: Optional[float] = None,
         lead_in: bool = True,
     ) -> None:
-        """
-        Set up the pattern.
+        """Set up the pattern.
 
-        Inputs:
-            left_pos, right_pos: current foot positions (3,) in the plane frame.
-            com_state: (position(2), velocity(2), acceleration(2)) of the CoM at t = 0; defaults to
-                a CoM at rest at the centre of the feet.
-            com_z: constant CoM height reference (z coordinate); defaults to `params.com_height`.
-            pre_time: duration of the initial transition; defaults to `params.init_time`.
-            lead_in: apply the quasi-static shift/hold above the first stance foot.
+        Args:
+            params: Gait parameters (validated here).
+            planner: Footstep planner providing the steps.
+            left_pos: Current left foot position (3,) in the plane frame.
+            right_pos: Current right foot position (3,) in the plane frame.
+            com_state: (position(2), velocity(2), acceleration(2)) of the CoM at t = 0;
+                defaults to a CoM at rest at the centre of the feet.
+            com_z: Constant CoM height reference (z coordinate); defaults to
+                `params.com_height`.
+            pre_time: Duration of the initial transition; defaults to `params.init_time`.
+            lead_in: Apply the quasi-static shift/hold above the first stance foot.
         """
         params.validate()
         self.params = params
@@ -136,6 +144,14 @@ class WalkingPattern:
 
     # ------------------------------------------------------------------ planning helpers
     def _zmp(self, step: Footstep) -> np.ndarray:
+        """Compute the single-support ZMP target of a step.
+
+        Args:
+            step: Footstep whose stance foot carries the robot.
+
+        Returns:
+            ZMP (x, y): the stance foot plus the configured offsets.
+        """
         zmp = step.stance + self._offset
         if self.params.zmp_lateral > 0.0:
             zmp = zmp.copy()
@@ -144,14 +160,30 @@ class WalkingPattern:
         return zmp
 
     def _zmp_start(self, k: int) -> np.ndarray:
+        """Return the ZMP at the start of step `k` (the previous step's stance ZMP).
+
+        Args:
+            k: Step index.
+
+        Returns:
+            ZMP (x, y).
+        """
         return self._start_zmp if k == 0 else self._zmp(self.planner.step(k - 1))
 
     def _final_com(self) -> np.ndarray:
+        """Return the CoM resting position between the feet after the last step."""
         last = self.planner.step(self.num_steps - 1)
         return 0.5 * (last.stance + last.swing_target) + self._offset
 
     def _xi_start(self, k: int) -> np.ndarray:
-        """DCM at the start of step k, planned backwards over a limited preview of later steps."""
+        """Compute the DCM at the start of step `k`, planned backwards over a limited preview.
+
+        Args:
+            k: Step index.
+
+        Returns:
+            DCM (x, y) at the start of the step.
+        """
         last = k + self.params.lookahead_steps
         finite_end = self.num_steps is not None and last >= self.num_steps - 1
         if finite_end:
@@ -164,7 +196,15 @@ class WalkingPattern:
         return xi
 
     def _eval(self, seg: _Segment, tau: float) -> Tuple:
-        """Evaluate the CoM position, velocity, acceleration and ZMP `tau` s into a step."""
+        """Evaluate the CoM position, velocity, acceleration and ZMP `tau` s into a step.
+
+        Args:
+            seg: Segment boundary conditions of the step.
+            tau: Time since the start of the step, in seconds.
+
+        Returns:
+            Tuple (position, velocity, acceleration, zmp).
+        """
         tau = min(max(tau, 0.0), self.step_time)
         td = self.dsp_time
         if td > 0.0:
@@ -179,6 +219,14 @@ class WalkingPattern:
         return c, v, a, zmp
 
     def _segment(self, k: int) -> _Segment:
+        """Return the LIPM segment of step `k`, computing missing segments lazily.
+
+        Args:
+            k: Step index.
+
+        Returns:
+            The segment's boundary conditions.
+        """
         while len(self._segments) <= k:
             prev = self._segments[-1]
             c_end, _, _, _ = self._eval(prev, self.step_time)
@@ -190,20 +238,45 @@ class WalkingPattern:
         return self._segments[k]
 
     def _step_state(self, k: int, tau: float):
+        """Evaluate the CoM state within step `k`.
+
+        Args:
+            k: Step index.
+            tau: Time since the start of the step, in seconds.
+
+        Returns:
+            Tuple (position, velocity, acceleration, zmp).
+        """
         return self._eval(self._segment(k), tau)
 
     # ------------------------------------------------------------------ timeline
     @property
     def duration(self) -> Optional[float]:
+        """Total duration in seconds, or None for an endless walk."""
         if self.num_steps is None:
             return None
         return self.lead + self.pre_time + self.num_steps * self.step_time + self.params.final_time
 
     def step_start_time(self, k: int) -> float:
+        """Compute the start time of step `k`.
+
+        Args:
+            k: Step index.
+
+        Returns:
+            Time in seconds since the pattern start.
+        """
         return self.lead + self.pre_time + k * self.step_time
 
     def step_index_at(self, t: float) -> int:
-        """Index of the active step at `t` (-1 initial phase, `num_steps` after the steps)."""
+        """Find the active step at time `t`.
+
+        Args:
+            t: Time in seconds since the pattern start.
+
+        Returns:
+            Step index; -1 in the initial phase, `num_steps` after the steps.
+        """
         t -= self.lead
         if t < self.pre_time:
             return -1
@@ -211,6 +284,15 @@ class WalkingPattern:
         return k if self.num_steps is None else min(k, self.num_steps)
 
     def _foot_positions(self, step: Footstep, tau: float):
+        """Compute both foot positions and velocities during a step.
+
+        Args:
+            step: Active footstep.
+            tau: Time since the start of the step, in seconds.
+
+        Returns:
+            Tuple of position and velocity dictionaries keyed by side.
+        """
         z = {s: self.feet0[s][2] for s in ('left', 'right')}
         swing_duration = (1.0 - self.params.dsp_ratio) * self.step_time
         traj = SwingFootTrajectory(
@@ -226,6 +308,15 @@ class WalkingPattern:
         return feet, vels
 
     def _resting_feet(self, left_xy, right_xy):
+        """Build stationary foot positions at the initial foot heights.
+
+        Args:
+            left_xy: Left foot (x, y).
+            right_xy: Right foot (x, y).
+
+        Returns:
+            Tuple of position and (zero) velocity dictionaries keyed by side.
+        """
         feet = {
             'left': np.append(left_xy, self.feet0['left'][2]),
             'right': np.append(right_xy, self.feet0['right'][2]),
@@ -233,6 +324,14 @@ class WalkingPattern:
         return feet, {'left': np.zeros(3), 'right': np.zeros(3)}
 
     def sample(self, t: float) -> WalkingReference:
+        """Sample the reference at time `t`.
+
+        Args:
+            t: Time in seconds since the pattern start (negative values are clamped to 0).
+
+        Returns:
+            The walking reference at `t`.
+        """
         t = max(t, 0.0)
         t_abs = t
         p = self.params
@@ -309,11 +408,16 @@ class WalkingPattern:
 
     # ------------------------------------------------------------------ stopping an endless walk
     def stop_pattern(self, k: int) -> 'WalkingPattern':
-        """
-        Create a new finite pattern that starts at the beginning of step `k` and closes the feet.
+        """Create a finite pattern that starts at the beginning of step `k` and closes the feet.
 
         The new pattern's time zero corresponds to `step_start_time(k)` of this pattern, and its
         CoM starts from the exact CoM state there (smooth hand-over).
+
+        Args:
+            k: Index of the step at whose start the new pattern begins.
+
+        Returns:
+            The new finite pattern.
         """
         step = self.planner.step(k)
         seg = self._segment(k)

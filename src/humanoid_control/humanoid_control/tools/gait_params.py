@@ -7,8 +7,7 @@ GRAVITY = 9.81
 
 @dataclass
 class GaitParams:
-    """
-    All lengths in metres, times in seconds.
+    """All lengths in metres, times in seconds.
 
     The gait is planned in a 2D plane frame (x forward, y towards the left foot) with z up.
     """
@@ -63,6 +62,11 @@ class GaitParams:
     step_adjust_min_norm: float = 0.01
 
     def validate(self) -> None:
+        """Check the parameters for consistency.
+
+        Raises:
+            ValueError: If a parameter is out of its valid range.
+        """
         if self.step_time <= 0.0 or self.com_height <= 0.0:
             raise ValueError('step_time and com_height must be positive')
         if not 0.0 <= self.dsp_ratio < 1.0:

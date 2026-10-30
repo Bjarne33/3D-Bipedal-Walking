@@ -10,8 +10,7 @@ from humanoid_control.tools.gait_params import GaitParams
 
 @dataclass
 class Footstep:
-    """
-    One step: the swing foot moves from `swing_start` to `swing_target`.
+    """One step: the swing foot moves from `swing_start` to `swing_target`.
 
     The `stance` foot carries the robot meanwhile.
     """
@@ -24,12 +23,12 @@ class Footstep:
 
     @property
     def stance_side(self) -> str:
+        """Side of the stance foot ('left' or 'right')."""
         return 'left' if self.swing_side == 'right' else 'right'
 
 
 class FixedFootstepPlanner:
-    """
-    Alternating steps of constant length and width.
+    """Alternating steps of constant length and width.
 
     The first step is a half step, every later step has `step_length`. For a finite plan
     (`num_steps` is not None) one closing step with zero length is appended so that the
@@ -45,6 +44,19 @@ class FixedFootstepPlanner:
         num_steps: Optional[int] = None,
         first_step_length: Optional[float] = None,
     ) -> None:
+        """Plan the footsteps.
+
+        Args:
+            params: Gait parameters.
+            left_xy: Initial left foot position (2,) in the plane frame.
+            right_xy: Initial right foot position (2,) in the plane frame.
+            first_swing: Side of the first swing foot, 'left' or 'right'.
+            num_steps: Number of steps before the closing step, or None to plan forever.
+            first_step_length: Length of the first step; defaults to half a step.
+
+        Raises:
+            ValueError: If `first_swing` is invalid or `num_steps` is negative.
+        """
         if first_swing not in ('left', 'right'):
             raise ValueError("first_swing must be 'left' or 'right'")
         if num_steps is not None and num_steps < 0:
@@ -66,10 +78,23 @@ class FixedFootstepPlanner:
         return None if self.num_steps is None else self.num_steps + 1
 
     def _lateral(self, side: str) -> float:
+        """Return the lateral (y) position of a foot.
+
+        Args:
+            side: 'left' or 'right'.
+
+        Returns:
+            The y coordinate, half a step width from the centre line.
+        """
         half = 0.5 * self.params.step_width
         return self.y_center + (half if side == 'left' else -half)
 
     def _extend(self, index: int) -> None:
+        """Plan steps lazily until step `index` exists.
+
+        Args:
+            index: Highest step index that must be available.
+        """
         while len(self._steps) <= index:
             k = len(self._steps)
             if k == 0:
@@ -91,7 +116,14 @@ class FixedFootstepPlanner:
             self._steps.append(Footstep(k, swing_side, stance.copy(), swing_start.copy(), target))
 
     def step(self, index: int) -> Optional[Footstep]:
-        """Return step `index` (0-based), or None beyond the end of a finite plan."""
+        """Return step `index` (0-based), or None beyond the end of a finite plan.
+
+        Args:
+            index: Step index.
+
+        Returns:
+            The footstep, or None if `index` is outside the plan.
+        """
         total = self.total_steps
         if index < 0 or (total is not None and index >= total):
             return None

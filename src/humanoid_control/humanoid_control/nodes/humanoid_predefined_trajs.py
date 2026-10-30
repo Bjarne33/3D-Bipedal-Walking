@@ -15,6 +15,7 @@ from humanoid_interfaces.srv import StepN
 
 
 class StepPhase(Enum):
+    """Phases of the predefined stepping sequence."""
     IDLE = 0
     SHIFT_TO_LEFT_SUPPORT = 1
     SWING_RIGHT_FOOT = 2
@@ -26,7 +27,10 @@ class StepPhase(Enum):
 
 
 class HumanoidPredefinedTrajs(Node):
+    """Execute predefined joint-space stepping motions via services."""
+
     def __init__(self) -> None:
+        """Declare parameters, create the services and publisher, and start the update timer."""
         super().__init__('humanoid_predefined_trajs')
 
         self.declare_parameter('controller_name', 'effort_position_controller')
@@ -107,11 +111,25 @@ class HumanoidPredefinedTrajs(Node):
         )
 
     def joint_state_callback(self, msg: JointState) -> None:
+        """Cache the latest joint positions.
+
+        Args:
+            msg: Latest joint states.
+        """
         for name, position in zip(msg.name, msg.position):
             self.current_joint_positions[name] = position
 
     def step_once_callback(self, _request: Trigger.Request,
                            response: Trigger.Response) -> Trigger.Response:
+        """Handle `step_once`: start a single step with the right foot.
+
+        Args:
+            _request: Unused trigger request.
+            response: Response to fill in.
+
+        Returns:
+            The response with `success` and `message` set.
+        """
         self.get_logger().info('Received /humanoid_predefined_trajs/step_once request')
 
         if self.phase != StepPhase.IDLE:
@@ -138,6 +156,15 @@ class HumanoidPredefinedTrajs(Node):
         return response
 
     def step_n_callback(self, request: StepN.Request, response: StepN.Response) -> StepN.Response:
+        """Handle `step_n`: start a sequence of alternating steps, beginning with the right foot.
+
+        Args:
+            request: Request with the positive number of steps.
+            response: Response to fill in.
+
+        Returns:
+            The response with `success` and `message` set.
+        """
         num_steps = int(request.num_steps)
         self.get_logger().info(
             f'Received /humanoid_predefined_trajs/step_n request (num_steps={num_steps})')
@@ -168,6 +195,7 @@ class HumanoidPredefinedTrajs(Node):
         return response
 
     def update(self) -> None:
+        """Advance the phase queue once the current target pose is reached or its time elapsed."""
         if self.phase == StepPhase.IDLE:
             return
 
@@ -187,9 +215,22 @@ class HumanoidPredefinedTrajs(Node):
             self.phase_queue = []
 
     def have_all_joints(self) -> bool:
+        """Check whether a position is known for every controlled joint.
+
+        Returns:
+            True if all joint positions have been received.
+        """
         return all(joint_name in self.current_joint_positions for joint_name in self.joint_names)
 
     def pose_reached(self, target_pose: Dict[str, float]) -> bool:
+        """Check whether the current joint positions match a target pose.
+
+        Args:
+            target_pose: Target position per joint name.
+
+        Returns:
+            True if every joint is within the configured tolerance of its target.
+        """
         for joint_name, target in target_pose.items():
             current = self.current_joint_positions.get(joint_name)
             if current is None:
@@ -199,6 +240,7 @@ class HumanoidPredefinedTrajs(Node):
         return True
 
     def start_next_phase(self) -> None:
+        """Pop the next phase from the queue and publish its pose, or go idle when empty."""
         if not self.phase_queue:
             self.phase = StepPhase.IDLE
             self.get_logger().info('Step sequence complete')
@@ -214,6 +256,12 @@ class HumanoidPredefinedTrajs(Node):
         self.get_logger().info(f'Started phase {phase.name} ({duration_sec:.2f}s)')
 
     def publish_pose(self, pose: Dict[str, float], duration_sec: float) -> None:
+        """Publish a single-point joint trajectory.
+
+        Args:
+            pose: Target position per joint name.
+            duration_sec: Time to reach the pose, in seconds.
+        """
         msg = JointTrajectory()
         msg.joint_names = list(self.joint_names)
 
@@ -226,6 +274,11 @@ class HumanoidPredefinedTrajs(Node):
         self.traj_pub.publish(msg)
 
     def build_phase_queue(self) -> List[tuple[StepPhase, Dict[str, float], float]]:
+        """Build the right-foot step sequence.
+
+        Returns:
+            Ordered (phase, target pose, duration in seconds) tuples.
+        """
         shift_left_pose = dict(self.neutral_pose)
         shift_left_pose['left_hip_roll'] = self.left_support_hip_roll
         shift_left_pose['right_hip_roll'] = self.left_support_hip_roll
@@ -265,7 +318,14 @@ class HumanoidPredefinedTrajs(Node):
 
     @staticmethod
     def mirror_pose(pose: Dict[str, float]) -> Dict[str, float]:
-        """Mirror a pose about the sagittal plane: swap legs and negate roll/yaw joints."""
+        """Mirror a pose about the sagittal plane: swap legs and negate roll/yaw joints.
+
+        Args:
+            pose: Target position per joint name.
+
+        Returns:
+            The mirrored pose.
+        """
         mirrored = {}
         for name, value in pose.items():
             side, joint = name.split('_', 1)
@@ -277,7 +337,14 @@ class HumanoidPredefinedTrajs(Node):
     def mirror_phase_queue(
         self, queue: List[tuple[StepPhase, Dict[str, float], float]]
     ) -> List[tuple[StepPhase, Dict[str, float], float]]:
-        """Turn a right-foot step sequence into the equivalent left-foot step sequence."""
+        """Turn a right-foot step sequence into the equivalent left-foot step sequence.
+
+        Args:
+            queue: Right-foot sequence of (phase, pose, duration in seconds) tuples.
+
+        Returns:
+            The mirrored sequence.
+        """
         mirrored_phase = {
             StepPhase.SHIFT_TO_LEFT_SUPPORT: StepPhase.SHIFT_TO_RIGHT_SUPPORT,
             StepPhase.SWING_RIGHT_FOOT: StepPhase.SWING_LEFT_FOOT,
@@ -289,6 +356,11 @@ class HumanoidPredefinedTrajs(Node):
 
 
 def main(args=None) -> None:
+    """Run the predefined trajectories node.
+
+    Args:
+        args: Optional command-line arguments passed to `rclpy.init`.
+    """
     rclpy.init(args=args)
     node = HumanoidPredefinedTrajs()
     rclpy.spin(node)

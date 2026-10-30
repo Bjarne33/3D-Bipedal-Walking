@@ -1,3 +1,5 @@
+"""Launch file that previews the humanoid model in RViz."""
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -8,6 +10,11 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    """Create the RViz preview launch description.
+
+    Returns:
+        The launch description.
+    """
     urdf_file = PathJoinSubstitution([
         FindPackageShare('humanoid_description'),
         'urdf',

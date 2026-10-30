@@ -1,8 +1,18 @@
+"""Package setup for humanoid_description."""
+
 from setuptools import find_packages, setup
 import os
 
 
 def package_files(directory):
+    """List all files below a directory.
+
+    Args:
+        directory: Directory to walk recursively.
+
+    Returns:
+        Paths of all files found.
+    """
     paths = []
     for (path, directories, filenames) in os.walk(directory):
         for filename in filenames:

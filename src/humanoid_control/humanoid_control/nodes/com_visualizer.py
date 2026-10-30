@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Node that computes the robot CoM from joint states and publishes RViz markers."""
 
 import os
 
@@ -21,8 +21,10 @@ from humanoid_control.tools.humanoid_kinematics import HumanoidKinematics
 
 
 class CoMVisualizer(Node):
+    """Publish CoM markers and, optionally, world-frame markers and the world -> base TF."""
 
     def __init__(self):
+        """Declare parameters, load the kinematics model and create publishers/subscribers."""
         super().__init__('com_visualizer')
 
         # --- parameters ---
@@ -103,6 +105,11 @@ class CoMVisualizer(Node):
         )
 
     def joint_callback(self, msg: JointState):
+        """Update the kinematics model from joint states and compute the CoM.
+
+        Args:
+            msg: Latest joint states.
+        """
         self.kinematics.set_joint_positions(msg.name, msg.position)
         result = self.kinematics.compute()
 
@@ -111,6 +118,7 @@ class CoMVisualizer(Node):
         self.latest_link_coms = self.kinematics.link_coms()
 
     def publish_latest_markers(self):
+        """Publish markers for the most recently computed CoM, if any."""
         if self.latest_com is None:
             return
 
@@ -118,6 +126,18 @@ class CoMVisualizer(Node):
 
     def _new_marker(self, marker_id: int, marker_type: int,
                     now_msg, frame_id: str, namespace: str):
+        """Create an ADD marker with the common header fields set.
+
+        Args:
+            marker_id: Marker id within the namespace.
+            marker_type: Marker shape (`Marker` type constant).
+            now_msg: Timestamp for the header.
+            frame_id: Frame the marker is expressed in.
+            namespace: Marker namespace.
+
+        Returns:
+            The new marker.
+        """
         marker = Marker()
         marker.header.frame_id = frame_id
         marker.header.stamp = now_msg
@@ -129,6 +149,16 @@ class CoMVisualizer(Node):
 
     @staticmethod
     def _point(x: float, y: float, z: float) -> Point:
+        """Create a `Point` message.
+
+        Args:
+            x: X coordinate.
+            y: Y coordinate.
+            z: Z coordinate.
+
+        Returns:
+            The point.
+        """
         p = Point()
         p.x = float(x)
         p.y = float(y)
@@ -136,6 +166,11 @@ class CoMVisualizer(Node):
         return p
 
     def model_states_callback(self, msg: ModelStates):
+        """Store the base pose from Gazebo model states and broadcast world -> base.
+
+        Args:
+            msg: Gazebo model states containing the robot model.
+        """
         try:
             idx = msg.name.index(self.model_name)
         except ValueError:
@@ -154,6 +189,11 @@ class CoMVisualizer(Node):
             self.publish_world_to_base_transform(self.latest_base_pose)
 
     def publish_world_to_base_transform(self, pose):
+        """Broadcast the world -> base transform.
+
+        Args:
+            pose: Base pose in the world frame.
+        """
         tf_msg = TransformStamped()
         tf_msg.header.stamp = self.get_clock().now().to_msg()
         tf_msg.header.frame_id = self.world_frame
@@ -172,6 +212,15 @@ class CoMVisualizer(Node):
 
     @staticmethod
     def _quat_rotate_vector(quat_xyzw, vec_xyz):
+        """Rotate a vector by a quaternion.
+
+        Args:
+            quat_xyzw: Quaternion (x, y, z, w); normalised internally.
+            vec_xyz: Vector (x, y, z) to rotate.
+
+        Returns:
+            The rotated vector as a list; unchanged if the quaternion is degenerate.
+        """
         qx, qy, qz, qw = quat_xyzw
         vx, vy, vz = vec_xyz
 
@@ -195,6 +244,14 @@ class CoMVisualizer(Node):
         return [vpx, vpy, vpz]
 
     def transform_com_to_world(self, com_base):
+        """Transform a CoM position from the base frame to the world frame.
+
+        Args:
+            com_base: CoM position (x, y, z) in the base frame.
+
+        Returns:
+            The CoM in the world frame, or None if no base pose is known yet.
+        """
         if self.latest_base_pose is None:
             if not self._missing_pose_warned:
                 self.get_logger().warn(
@@ -219,6 +276,15 @@ class CoMVisualizer(Node):
         ]
 
     def _publish_marker_set(self, com, frame_id, namespace, marker_pub, marker_id_offset):
+        """Publish the CoM sphere and its supporting markers.
+
+        Args:
+            com: CoM position (x, y, z) in `frame_id`.
+            frame_id: Frame the markers are expressed in.
+            namespace: Marker namespace.
+            marker_pub: Publisher to publish the markers on.
+            marker_id_offset: Offset added to the marker ids to keep sets distinct.
+        """
         now_msg = self.get_clock().now().to_msg()
 
         # CoM sphere
@@ -292,6 +358,11 @@ class CoMVisualizer(Node):
             marker_pub.publish(marker)
 
     def publish_markers(self, com):
+        """Publish the CoM marker set in the base frame and, if possible, the world frame.
+
+        Args:
+            com: CoM position (x, y, z) in the base frame.
+        """
         self._publish_marker_set(
             com,
             frame_id=self.base_frame,
@@ -313,7 +384,7 @@ class CoMVisualizer(Node):
 
 
 def main():
-
+    """Run the CoM visualizer node."""
     rclpy.init()
     node = CoMVisualizer()
     rclpy.spin(node)

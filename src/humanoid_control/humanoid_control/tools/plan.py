@@ -15,28 +15,49 @@ class PlaneFrame:
     """Maps between the base frame and the gait plane frame (x forward, y left, z up)."""
 
     def __init__(self, forward, left) -> None:
+        """Create the frame.
+
+        Args:
+            forward: Forward direction in the base frame (normalised internally).
+            left: Left direction in the base frame (normalised internally).
+        """
         self.forward = np.asarray(forward, float) / np.linalg.norm(forward)
         self.left = np.asarray(left, float) / np.linalg.norm(left)
         self.up = np.array([0.0, 0.0, 1.0])
 
     def to_plane(self, p) -> np.ndarray:
+        """Express a base-frame vector in the plane frame.
+
+        Args:
+            p: Vector (3,) in the base frame.
+
+        Returns:
+            The vector in the plane frame.
+        """
         return np.array([p @ self.forward, p @ self.left, p @ self.up])
 
     def to_base(self, p) -> np.ndarray:
+        """Express a plane-frame vector in the base frame.
+
+        Args:
+            p: Vector (3,) in the plane frame.
+
+        Returns:
+            The vector in the base frame.
+        """
         return p[0] * self.forward + p[1] * self.left + p[2] * self.up
 
 
 def plan_walk(standing, config, num_steps: int):
-    """
-    Build the gait plan from the standing kinematics and the node parameters.
+    """Build the gait plan from the standing kinematics and the node parameters.
 
-    Inputs:
+    Args:
         standing: `KinematicsResult` of the standing pose (base frame).
         config: mapping with `forward_axis`, `first_swing`, `ankle_to_sole`, `step_width`,
             `com_height` (<= 0: derived from the standing pose) and the `GaitParams` fields.
         num_steps: number of steps, 0 walks until stopped.
 
-    Result:
+    Returns:
         (frame, params, planner, pattern)
     """
     left, right = standing.feet['left'].position, standing.feet['right'].position
@@ -74,13 +95,19 @@ def plan_walk(standing, config, num_steps: int):
 
 
 def rotation_joint_maps(kin, frame) -> Dict[str, Dict[str, tuple]]:
-    """
-    Per side and joint group: (joint names, M) with joint offsets dq = M @ r.
+    """Per side and joint group: (joint names, M) with joint offsets dq = M @ r.
 
     r is a rotation [about forward, about left] of the body relative to the distal link
     (stance foot for the ankle group, stance thigh for the hip group). With the distal link
     held, a joint offset dq rotates the body by -dq about the joint axis, so M = -pinv(A)
     with the plane components of the joint axes as the columns of A. Uses `kin.q`.
+
+    Args:
+        kin: Kinematics object (its current configuration `q` is used).
+        frame: Plane frame of the gait.
+
+    Returns:
+        Per side and joint group ('ankle', 'hip'), a tuple (joint names, M).
     """
     maps = {}
     for side in ('left', 'right'):

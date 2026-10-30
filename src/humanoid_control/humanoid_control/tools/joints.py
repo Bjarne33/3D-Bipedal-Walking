@@ -1,5 +1,4 @@
-"""
-Actuated joint order and standing pose shared by all control nodes.
+"""Actuated joint order and standing pose shared by all control nodes.
 
 The order must match `config/ros2_control_controllers.yaml` and `urdf/ros2_control.xacro`
 in `humanoid_description`.

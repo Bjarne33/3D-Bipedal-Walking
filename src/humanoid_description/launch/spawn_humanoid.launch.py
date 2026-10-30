@@ -1,3 +1,5 @@
+"""Launch file that starts Gazebo, spawns the humanoid and starts the control nodes."""
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
@@ -11,6 +13,11 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    """Create the simulation launch description.
+
+    Returns:
+        The launch description.
+    """
     rviz_config_path = PathJoinSubstitution(
         [FindPackageShare('humanoid_description'), 'rviz', 'urdf.rviz'])
     pause = LaunchConfiguration('pause')
