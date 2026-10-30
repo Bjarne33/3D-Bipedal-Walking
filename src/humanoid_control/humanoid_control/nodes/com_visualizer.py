@@ -1,63 +1,41 @@
-"""Node that computes the robot CoM from joint states and publishes RViz markers."""
-
-import os
+"""Render the shared estimated CoM as base-frame and world-frame RViz markers."""
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile
-from rclpy.qos import QoSReliabilityPolicy
-from rclpy.qos import QoSHistoryPolicy
-
-from ament_index_python.packages import get_package_share_directory
-
-from gazebo_msgs.msg import ModelStates
-from geometry_msgs.msg import TransformStamped
-from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
-from tf2_ros import TransformBroadcaster
 
-from humanoid_control.tools.humanoid_kinematics import HumanoidKinematics
+from humanoid_control.tools.state_messages import warn_stale_state, xyz
+from humanoid_interfaces.msg import RobotState
 
 
 class CoMVisualizer(Node):
-    """Publish CoM markers and, optionally, world-frame markers and the world -> base TF."""
+    """Display measured CoM without owning kinematics, sensor subscriptions or base TF."""
 
     def __init__(self):
-        """Declare parameters, load the kinematics model and create publishers/subscribers."""
+        """Declare marker parameters and subscribe to the shared robot measurements."""
         super().__init__('com_visualizer')
 
         # --- parameters ---
         self.declare_parameter("base_frame", "base")
         self.declare_parameter("world_frame", "world")
-        self.declare_parameter("model_states_topic", "/gazebo/model_states")
-        self.declare_parameter("model_name", "humanoid")
         self.declare_parameter("marker_rate_hz", 20.0)
         self.declare_parameter("publish_world_markers", True)
-        self.declare_parameter("publish_world_to_base_tf", True)
+        self.declare_parameter("state_timeout_sec", 0.2)
 
         self.base_frame = self.get_parameter("base_frame").value
         self.world_frame = self.get_parameter("world_frame").value
-        self.model_states_topic = self.get_parameter("model_states_topic").value
-        self.model_name = self.get_parameter("model_name").value
         self.marker_rate_hz = float(self.get_parameter("marker_rate_hz").value)
         self.publish_world_markers = bool(self.get_parameter("publish_world_markers").value)
-        self.publish_world_to_base_tf = bool(self.get_parameter("publish_world_to_base_tf").value)
-
-        # --- load robot model ---
-        pkg_share = get_package_share_directory("humanoid_description")
-        model_path = os.path.join(pkg_share, "urdf", "humanoid.xacro")
-        self.kinematics = HumanoidKinematics.from_xacro(model_path)
-        self.model = self.kinematics.model
-
-        self.get_logger().info(f"Loaded URDF with {self.model.nq} DoF from {model_path}")
-        self.get_logger().info(f"Joint index mapping: {self.kinematics.joint_name_to_id}")
+        self.state_timeout = float(self.get_parameter("state_timeout_sec").value)
+        if self.state_timeout <= 0.0:
+            raise ValueError('state_timeout_sec must be positive')
 
         # --- ROS interfaces ---
         self.sub = self.create_subscription(
-            JointState,
-            "/joint_states",
-            self.joint_callback,
+            RobotState,
+            "/humanoid_estimator/state",
+            self.state_callback,
             10
         )
 
@@ -73,56 +51,28 @@ class CoMVisualizer(Node):
             10
         )
 
-        model_states_qos = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1,
-        )
-        self.model_states_sub = self.create_subscription(
-            ModelStates,
-            self.model_states_topic,
-            self.model_states_callback,
-            model_states_qos,
-        )
-
-        self.tf_broadcaster = TransformBroadcaster(self)
-
-        self.latest_com = None
-        self.latest_link_coms = None
-        self.latest_feet = None
-        self.latest_base_pose = None
-        self._missing_model_warned = False
-        self._missing_pose_warned = False
+        self.latest_state = None
         self.publish_timer = self.create_timer(
             1.0 / max(self.marker_rate_hz, 1.0),
             self.publish_latest_markers
         )
 
-        self.get_logger().info(
-            f"World CoM source: topic={self.model_states_topic}, model_name={self.model_name}, "
-            f"publish_world_markers={self.publish_world_markers}, "
-            f"publish_world_to_base_tf={self.publish_world_to_base_tf}"
-        )
-
-    def joint_callback(self, msg: JointState):
-        """Update the kinematics model from joint states and compute the CoM.
-
-        Args:
-            msg: Latest joint states.
-        """
-        self.kinematics.set_joint_positions(msg.name, msg.position)
-        result = self.kinematics.compute()
-
-        self.latest_com = result.com
-        self.latest_feet = result.feet
-        self.latest_link_coms = self.kinematics.link_coms()
+    def state_callback(self, msg: RobotState):
+        """Cache the estimated CoM and verify the configured marker frames."""
+        if msg.header.frame_id != self.world_frame or msg.base_frame_id != self.base_frame:
+            self.get_logger().error(
+                'RobotState frames do not match the configured marker frames',
+                throttle_duration_sec=5.0)
+            return
+        self.latest_state = msg
 
     def publish_latest_markers(self):
         """Publish markers for the most recently computed CoM, if any."""
-        if self.latest_com is None:
+        if self.latest_state is None:
             return
 
-        self.publish_markers(self.latest_com)
+        warn_stale_state(self, self.latest_state, self.state_timeout)
+        self.publish_markers(xyz(self.latest_state.com_base))
 
     def _new_marker(self, marker_id: int, marker_type: int,
                     now_msg, frame_id: str, namespace: str):
@@ -164,116 +114,6 @@ class CoMVisualizer(Node):
         p.y = float(y)
         p.z = float(z)
         return p
-
-    def model_states_callback(self, msg: ModelStates):
-        """Store the base pose from Gazebo model states and broadcast world -> base.
-
-        Args:
-            msg: Gazebo model states containing the robot model.
-        """
-        try:
-            idx = msg.name.index(self.model_name)
-        except ValueError:
-            if not self._missing_model_warned:
-                self.get_logger().warn(
-                    f"Model '{self.model_name}' not found on {self.model_states_topic}. "
-                    f"Available models: {list(msg.name)}"
-                )
-                self._missing_model_warned = True
-            return
-
-        self._missing_model_warned = False
-        self.latest_base_pose = msg.pose[idx]
-
-        if self.publish_world_to_base_tf:
-            self.publish_world_to_base_transform(self.latest_base_pose)
-
-    def publish_world_to_base_transform(self, pose):
-        """Broadcast the world -> base transform.
-
-        Args:
-            pose: Base pose in the world frame.
-        """
-        tf_msg = TransformStamped()
-        tf_msg.header.stamp = self.get_clock().now().to_msg()
-        tf_msg.header.frame_id = self.world_frame
-        tf_msg.child_frame_id = self.base_frame
-
-        tf_msg.transform.translation.x = pose.position.x
-        tf_msg.transform.translation.y = pose.position.y
-        tf_msg.transform.translation.z = pose.position.z
-
-        tf_msg.transform.rotation.x = pose.orientation.x
-        tf_msg.transform.rotation.y = pose.orientation.y
-        tf_msg.transform.rotation.z = pose.orientation.z
-        tf_msg.transform.rotation.w = pose.orientation.w
-
-        self.tf_broadcaster.sendTransform(tf_msg)
-
-    @staticmethod
-    def _quat_rotate_vector(quat_xyzw, vec_xyz):
-        """Rotate a vector by a quaternion.
-
-        Args:
-            quat_xyzw: Quaternion (x, y, z, w); normalised internally.
-            vec_xyz: Vector (x, y, z) to rotate.
-
-        Returns:
-            The rotated vector as a list; unchanged if the quaternion is degenerate.
-        """
-        qx, qy, qz, qw = quat_xyzw
-        vx, vy, vz = vec_xyz
-
-        q_norm = (qx * qx + qy * qy + qz * qz + qw * qw) ** 0.5
-        if q_norm < 1e-12:
-            return [vx, vy, vz]
-
-        qx /= q_norm
-        qy /= q_norm
-        qz /= q_norm
-        qw /= q_norm
-
-        # v' = v + 2 * cross(q_vec, cross(q_vec, v) + q_w * v)
-        tx = 2.0 * (qy * vz - qz * vy)
-        ty = 2.0 * (qz * vx - qx * vz)
-        tz = 2.0 * (qx * vy - qy * vx)
-
-        vpx = vx + qw * tx + (qy * tz - qz * ty)
-        vpy = vy + qw * ty + (qz * tx - qx * tz)
-        vpz = vz + qw * tz + (qx * ty - qy * tx)
-        return [vpx, vpy, vpz]
-
-    def transform_com_to_world(self, com_base):
-        """Transform a CoM position from the base frame to the world frame.
-
-        Args:
-            com_base: CoM position (x, y, z) in the base frame.
-
-        Returns:
-            The CoM in the world frame, or None if no base pose is known yet.
-        """
-        if self.latest_base_pose is None:
-            if not self._missing_pose_warned:
-                self.get_logger().warn(
-                    f"No pose received yet from {self.model_states_topic}; "
-                    "world CoM markers will be skipped."
-                )
-                self._missing_pose_warned = True
-            return None
-
-        self._missing_pose_warned = False
-
-        pose = self.latest_base_pose
-        rotated = self._quat_rotate_vector(
-            [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],
-            [float(com_base[0]), float(com_base[1]), float(com_base[2])],
-        )
-
-        return [
-            rotated[0] + pose.position.x,
-            rotated[1] + pose.position.y,
-            rotated[2] + pose.position.z,
-        ]
 
     def _publish_marker_set(self, com, frame_id, namespace, marker_pub, marker_id_offset):
         """Publish the CoM sphere and its supporting markers.
@@ -371,16 +211,14 @@ class CoMVisualizer(Node):
             marker_id_offset=0,
         )
 
-        if self.publish_world_markers:
-            com_world = self.transform_com_to_world(com)
-            if com_world is not None:
-                self._publish_marker_set(
-                    com_world,
-                    frame_id=self.world_frame,
-                    namespace="com_world",
-                    marker_pub=self.world_marker_pub,
-                    marker_id_offset=100,
-                )
+        if self.publish_world_markers and self.latest_state.base_valid:
+            self._publish_marker_set(
+                xyz(self.latest_state.com),
+                frame_id=self.world_frame,
+                namespace="com_world",
+                marker_pub=self.world_marker_pub,
+                marker_id_offset=100,
+            )
 
 
 def main():

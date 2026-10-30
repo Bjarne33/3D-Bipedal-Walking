@@ -112,6 +112,20 @@ def generate_launch_description():
         output='screen',
     )
 
+    humanoid_estimator = Node(
+        package='humanoid_control',
+        executable='humanoid_estimator',
+        name='humanoid_estimator',
+        output='screen',
+        parameters=[PathJoinSubstitution([
+            FindPackageShare('humanoid_control'), 'config', 'estimator.yaml',
+        ]), {
+            'use_sim_time': use_sim_time,
+            # When floating, robot_state_publisher already provides world -> base.
+            'publish_world_to_base_tf': PythonExpression(["'", floating, "' != 'true'"]),
+        }],
+    )
+
     com_visualizer = Node(
         package='humanoid_control',
         executable='com_visualizer',
@@ -121,10 +135,7 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'world_frame': 'world',
             'base_frame': 'base',
-            'model_name': 'humanoid',
             'publish_world_markers': True,
-            # When floating, robot_state_publisher already provides world -> base.
-            'publish_world_to_base_tf': PythonExpression(["'", floating, "' != 'true'"]),
         }],
     )
 
@@ -173,6 +184,7 @@ def generate_launch_description():
         load_effort_position_controller,
         rviz,
         humanoid_startup,
+        humanoid_estimator,
         com_visualizer,
         humanoid_predefined_trajs,
     ])

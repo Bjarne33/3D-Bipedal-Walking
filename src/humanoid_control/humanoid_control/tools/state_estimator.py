@@ -1,9 +1,4 @@
-"""Measured balance state for humanoid_walk (base ground truth + joint states + ankle FT).
-
-The estimator keeps its own Pinocchio configuration and data so that it never disturbs the
-IK solver. All outputs are expressed in the gait plane frame of the walk (x forward, y left),
-anchored at the measured base pose when the walk started (`set_walk_reference_frame`).
-"""
+"""World-frame robot measurements and walking-frame balance projection."""
 
 from dataclasses import dataclass
 import threading
@@ -25,6 +20,22 @@ class FootWrench:
 
     force: np.ndarray
     torque: np.ndarray
+
+
+@dataclass
+class RobotEstimate:
+    """Robot measurements in world coordinates, independent of any walking reference."""
+
+    base: pin.SE3
+    base_omega: np.ndarray
+    com: np.ndarray
+    com_vel: np.ndarray
+    feet: Dict[str, pin.SE3]
+    foot_force: Dict[str, float]
+    contact: Dict[str, bool]
+    support_points: np.ndarray
+    zmp: np.ndarray
+    zmp_valid: bool
 
 
 def axial_to_plane(frame, vec) -> np.ndarray:
@@ -69,21 +80,15 @@ def cop_from_ankle_wrench(force, torque, ankle_to_sole: float) -> Optional[np.nd
     return np.array([px, py])
 
 
-class BalanceStateEstimator:
-    """Measured CoM, DCM, ZMP, support polygon and tilt in the gait plane frame."""
+class RobotStateEstimator:
+    """Reconstruct world-frame robot state from base, joint and wrench measurements."""
 
-    def __init__(self, alpha: float = 1.0) -> None:
-        """Create the estimator.
-
-        Args:
-            alpha: Low-pass filter coefficient in [0, 1]; 1 means no filtering.
-        """
-        self.alpha = float(alpha)
+    def __init__(self) -> None:
+        """Create private measurement and forward-kinematics storage."""
         self.base_world: Optional[pin.SE3] = None
         self.base_vel_world = np.zeros(3)
         self.base_omega_world = np.zeros(3)
         self.base_time: Optional[float] = None
-        self.ref_world: Optional[pin.SE3] = None
         self.joint_state: Dict[str, tuple] = {}
         self.wrenches: Dict[str, FootWrench] = {}
         self._wrench_sums: Dict[str, list] = {}
@@ -92,7 +97,6 @@ class BalanceStateEstimator:
         self._data = None
         self._q = None
         self._v = None
-        self._com_vel: Optional[np.ndarray] = None
 
     # ------------------------------------------------------------------ inputs
     def set_base(self, base_world: pin.SE3, stamp: float, lin_vel=None, ang_vel=None) -> None:
@@ -110,19 +114,6 @@ class BalanceStateEstimator:
             self.base_vel_world = np.asarray(lin_vel, float)
         if ang_vel is not None:
             self.base_omega_world = np.asarray(ang_vel, float)
-
-    def set_walk_reference_frame(self) -> bool:
-        """Anchor the plane frame at the current measured base pose.
-
-        Returns:
-            True if anchored, False if no base pose is known.
-        """
-        self._com_vel = None
-        if self.base_world is None:
-            self.ref_world = None
-            return False
-        self.ref_world = self.base_world.copy()
-        return True
 
     def set_joint_state(self, names, positions, velocities=None, efforts=None) -> None:
         """Store the latest joint measurements.
@@ -179,35 +170,21 @@ class BalanceStateEstimator:
             self._q = pin.neutral(kin.model)
             self._v = np.zeros(kin.model.nv)
 
-    def _plane_rotvec(self, frame, rotation_world: np.ndarray) -> np.ndarray:
-        """Compute the rotation of a world-frame rotation relative to the walk-start base.
-
-        Args:
-            frame: Plane frame of the gait.
-            rotation_world: Rotation matrix in the world frame.
-
-        Returns:
-            Rotation as [about forward, about left].
-        """
-        return axial_to_plane(frame, pin.log3(self.ref_world.rotation.T @ rotation_world))
-
     # ------------------------------------------------------------------ estimate
-    def estimate(self, kin, frame, ground_height: float, contact_tol: float, omega: float,
-                 ankle_to_sole: float) -> Optional[BalanceEstimate]:
-        """Return the measured balance state.
+    def estimate(self, kin, ground_height: float, contact_tol: float,
+                 ankle_to_sole: float) -> Optional[RobotEstimate]:
+        """Return the measured robot state without gait-dependent transformations.
 
         Args:
             kin: Kinematics object holding the current model.
-            frame: Plane frame of the gait.
-            ground_height: Ground height in the plane frame.
+            ground_height: Ground height in the world frame.
             contact_tol: Height tolerance below which a foot counts as in contact.
-            omega: LIPM natural frequency in rad/s.
             ankle_to_sole: Distance from the ankle to the sole in metres.
 
         Returns:
-            The balance estimate, or None before the base pose is known.
+            The robot estimate, or None before the base pose is known.
         """
-        if self.base_world is None or self.ref_world is None:
+        if self.base_world is None:
             return None
         self._bind(kin)
         self._consume_wrenches()
@@ -227,24 +204,15 @@ class BalanceStateEstimator:
         com_vel_world = np.array(data.vcom[0])
         pin.updateFramePlacements(model, data)
 
-        if self._com_vel is None or self.alpha >= 1.0:
-            self._com_vel = com_vel_world
-        else:
-            self._com_vel = (1.0 - self.alpha) * self._com_vel + self.alpha * com_vel_world
-
-        ref_inv = self.ref_world.inverse()
-        com = frame.to_plane(ref_inv.act(com_world))
-        com_vel = frame.to_plane(self.ref_world.rotation.T @ self._com_vel)
-        dcm = com[:2] + com_vel[:2] / max(omega, 1e-6)
-
         support_points = []
-        foot_tilt = {}
+        feet = {}
         foot_force = {}
-        zmp_sum = np.zeros(2)
+        contact = {}
+        zmp_sum = np.zeros(3)
         fz_sum = 0.0
         for side, fid in kin.foot_frame_ids.items():
             foot = data.oMf[fid]
-            foot_tilt[side] = self._plane_rotvec(frame, foot.rotation)
+            feet[side] = foot.copy()
             corners = np.array([foot.act(c) for c in kin.sole_corners[side]])
             wrench = self.wrenches.get(side)
             fz = abs(float(wrench.force[2])) if wrench is not None else 0.0
@@ -256,32 +224,69 @@ class BalanceStateEstimator:
                 loaded = fz >= MIN_CONTACT_FORCE
             else:
                 loaded = float(corners[:, 2].min() - ground_height) < contact_tol
+            contact[side] = bool(loaded)
             if not loaded:
                 continue
             for c in corners:
-                support_points.append(frame.to_plane(ref_inv.act(c))[:2])
+                support_points.append(c)
             cop = cop_from_ankle_wrench(wrench.force, wrench.torque, ankle_to_sole) \
                 if wrench is not None else None
             if cop is not None:
                 cop_world = foot.act(np.array([cop[0], cop[1], -ankle_to_sole]))
-                zmp_sum += frame.to_plane(ref_inv.act(cop_world))[:2] * fz
+                zmp_sum += cop_world * fz
                 fz_sum += fz
-        hull = convex_hull(np.vstack(support_points)) if support_points else np.zeros((0, 2))
         zmp_valid = fz_sum >= MIN_CONTACT_FORCE
-        zmp = zmp_sum / fz_sum if zmp_valid else np.zeros(2)
+        zmp = zmp_sum / fz_sum if zmp_valid else np.zeros(3)
 
-        tilt = self._plane_rotvec(frame, rot)
-        tilt_rate = axial_to_plane(frame, self.ref_world.rotation.T @ self.base_omega_world)
-
-        return BalanceEstimate(
-            com=com[:2],
-            com_vel=com_vel[:2],
-            dcm=dcm,
+        return RobotEstimate(
+            base=self.base_world.copy(),
+            base_omega=self.base_omega_world.copy(),
+            com=com_world,
+            com_vel=com_vel_world,
+            feet=feet,
+            foot_force=foot_force,
+            contact=contact,
+            support_points=np.array(support_points).reshape(-1, 3),
             zmp=zmp,
             zmp_valid=bool(zmp_valid),
-            support_hull=hull,
-            tilt=tilt,
-            tilt_rate=tilt_rate,
-            foot_tilt=foot_tilt,
-            foot_force=foot_force,
+        )
+
+
+class WalkStateProjection:
+    """Project robot measurements into the walk-start frame and derive filtered DCM."""
+
+    def __init__(self, reference: pin.SE3, alpha: float = 1.0) -> None:
+        """Capture the walk reference and initialise the per-walk velocity filter."""
+        self.reference = reference.copy()
+        self.alpha = float(alpha)
+        self._com_vel: Optional[np.ndarray] = None
+
+    def project(self, state: RobotEstimate, frame, omega: float) -> BalanceEstimate:
+        """Apply the original gait-plane projection, velocity filter and tilt conventions."""
+        if self._com_vel is None or self.alpha >= 1.0:
+            self._com_vel = state.com_vel.copy()
+        else:
+            self._com_vel = (1.0 - self.alpha) * self._com_vel + self.alpha * state.com_vel
+        ref_inv = self.reference.inverse()
+        com = frame.to_plane(ref_inv.act(state.com))[:2]
+        com_vel = frame.to_plane(self.reference.rotation.T @ self._com_vel)[:2]
+        points = np.array([
+            frame.to_plane(ref_inv.act(p))[:2] for p in state.support_points
+        ]).reshape(-1, 2)
+
+        def tilt(rotation):
+            return axial_to_plane(frame, pin.log3(self.reference.rotation.T @ rotation))
+
+        return BalanceEstimate(
+            com=com,
+            com_vel=com_vel,
+            dcm=com + com_vel / max(omega, 1e-6),
+            zmp=frame.to_plane(ref_inv.act(state.zmp))[:2]
+            if state.zmp_valid else np.zeros(2),
+            zmp_valid=state.zmp_valid,
+            support_hull=convex_hull(points) if len(points) else np.zeros((0, 2)),
+            tilt=tilt(state.base.rotation),
+            tilt_rate=axial_to_plane(frame, self.reference.rotation.T @ state.base_omega),
+            foot_tilt={s: tilt(foot.rotation) for s, foot in state.feet.items()},
+            foot_force=state.foot_force.copy(),
         )

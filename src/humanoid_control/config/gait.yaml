@@ -7,11 +7,7 @@ humanoid_walk:
     first_swing: right
     forward_axis: [0.0, 1.0, 0.0]  # base-frame walking direction
     ankle_to_sole: 0.05
-    odom_topic: /odom  # base pose/twist ground truth (gazebo_ros_p3d)
-    left_ft_topic: /left_foot_ft
-    right_ft_topic: /right_foot_ft
-    ground_height: 0.0
-    contact_tolerance: 0.005
+    state_timeout_sec: 0.2  # warn only; sensor inputs are configured in estimator.yaml
 
     # <= 0: derived from the standing pose
     step_width: 0.0

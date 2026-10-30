@@ -1,0 +1,13 @@
+humanoid_estimator:
+  ros__parameters:
+    update_rate_hz: 50.0  # matches the default walking control rate
+    odom_topic: /odom  # gazebo_ros_p3d: pose AND twist in the world frame
+    left_ft_topic: /left_foot_ft
+    right_ft_topic: /right_foot_ft
+    world_frame: world
+    base_frame: base
+    publish_world_to_base_tf: true  # overridden by bringup when floating:=true
+    ground_height: 0.0
+    contact_tolerance: 0.005
+    ankle_to_sole: 0.05  # keep aligned with the walker's geometry parameter
+    state_timeout_sec: 0.2  # warn only; cached-measurement behavior is unchanged

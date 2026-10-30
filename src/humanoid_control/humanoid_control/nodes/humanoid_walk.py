@@ -15,15 +15,11 @@ import numpy as np
 import pinocchio as pin
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import WrenchStamped
-from nav_msgs.msg import Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -32,10 +28,11 @@ from humanoid_control.tools.gait_params import GaitParams
 from humanoid_control.tools.humanoid_kinematics import HumanoidKinematics
 from humanoid_control.tools.joints import JOINT_NAMES
 from humanoid_control.tools.plan import plan_walk, rotation_joint_maps
-from humanoid_control.tools.state_estimator import BalanceStateEstimator
+from humanoid_control.tools.state_estimator import WalkStateProjection
+from humanoid_control.tools.state_messages import message_to_estimate, warn_stale_state
 from humanoid_control.tools.support_polygon import signed_margin
 from humanoid_interfaces.action import Walk
-from humanoid_interfaces.msg import BalanceState
+from humanoid_interfaces.msg import BalanceState, RobotState
 
 
 class HumanoidWalk(Node):
@@ -57,12 +54,7 @@ class HumanoidWalk(Node):
         # <= 0: derive from the standing pose (feet distance / CoM height above the ground).
         self.declare_parameter('step_width', 0.0)
         self.declare_parameter('com_height', 0.0)
-        # Balance state sources: base pose/twist ground truth and ankle force/torque sensors.
-        self.declare_parameter('odom_topic', '/odom')
-        self.declare_parameter('left_ft_topic', '/left_foot_ft')
-        self.declare_parameter('right_ft_topic', '/right_foot_ft')
-        self.declare_parameter('ground_height', 0.0)
-        self.declare_parameter('contact_tolerance', 0.005)
+        self.declare_parameter('state_timeout_sec', 0.2)
         defaults = GaitParams(zmp_offset_forward=0.05)
         for field in dataclasses.fields(GaitParams):
             if field.name in ('step_width', 'com_height'):
@@ -74,32 +66,19 @@ class HumanoidWalk(Node):
         self.lead = float(self.get_parameter('trajectory_lead_sec').value)
 
         self.ankle_to_sole = float(self.get_parameter('ankle_to_sole').value)
-        self.ground_height = float(self.get_parameter('ground_height').value)
-        self.contact_tolerance = float(self.get_parameter('contact_tolerance').value)
+        self.state_timeout = float(self.get_parameter('state_timeout_sec').value)
+        if self.state_timeout <= 0.0:
+            raise ValueError('state_timeout_sec must be positive')
         self.joint_positions: Dict[str, float] = {}
         self.stop_requested = threading.Event()
         self.walking = False
         self.walk_lock = threading.Lock()
 
-        self.estimator = BalanceStateEstimator(alpha=defaults.balance_state_alpha)
+        self.latest_state = None
 
         group = ReentrantCallbackGroup()
-        self.create_subscription(JointState, '/joint_states', self._joint_state_cb, 10)
         self.create_subscription(
-            Odometry, str(self.get_parameter('odom_topic').value), self._odom_cb,
-            qos_profile_sensor_data)
-        self.create_subscription(
-            WrenchStamped,
-            str(self.get_parameter('left_ft_topic').value),
-            self._left_ft_cb,
-            qos_profile_sensor_data,
-        )
-        self.create_subscription(
-            WrenchStamped,
-            str(self.get_parameter('right_ft_topic').value),
-            self._right_ft_cb,
-            qos_profile_sensor_data,
-        )
+            RobotState, '/humanoid_estimator/state', self._state_cb, 10)
         controller = str(self.get_parameter('controller_name').value)
         self.traj_pub = self.create_publisher(
             JointTrajectory, f'/{controller}/joint_trajectory', 10)
@@ -124,57 +103,11 @@ class HumanoidWalk(Node):
         )
 
     # ------------------------------------------------------------------ callbacks
-    def _joint_state_cb(self, msg: JointState) -> None:
-        """Cache joint positions and forward the joint state to the estimator.
-
-        Args:
-            msg: Latest joint states.
-        """
-        for name, position in zip(msg.name, msg.position):
+    def _state_cb(self, msg: RobotState) -> None:
+        """Cache the shared measurements and joint positions used to initialise IK."""
+        self.latest_state = msg
+        for name, position in zip(msg.joint_state.name, msg.joint_state.position):
             self.joint_positions[name] = position
-        self.estimator.set_joint_state(msg.name, msg.position, msg.velocity, msg.effort)
-
-    def _odom_cb(self, msg: Odometry) -> None:
-        """Forward the ground-truth base pose and twist to the estimator.
-
-        Args:
-            msg: Base odometry from the Gazebo p3d plugin.
-        """
-        pose, twist = msg.pose.pose, msg.twist.twist
-        base = pin.XYZQUATToSE3(np.array([
-            pose.position.x, pose.position.y, pose.position.z,
-            pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w,
-        ]))
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        self.estimator.set_base(
-            base, stamp,
-            [twist.linear.x, twist.linear.y, twist.linear.z],
-            [twist.angular.x, twist.angular.y, twist.angular.z],
-        )
-
-    def _left_ft_cb(self, msg: WrenchStamped) -> None:
-        """Forward the left ankle force/torque sample to the estimator.
-
-        Args:
-            msg: Left ankle wrench.
-        """
-        self.estimator.set_wrench(
-            'left',
-            [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
-            [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
-        )
-
-    def _right_ft_cb(self, msg: WrenchStamped) -> None:
-        """Forward the right ankle force/torque sample to the estimator.
-
-        Args:
-            msg: Right ankle wrench.
-        """
-        self.estimator.set_wrench(
-            'right',
-            [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z],
-            [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z],
-        )
 
     def _have_all_joints(self) -> bool:
         """Check whether a position is known for every controlled joint.
@@ -396,8 +329,12 @@ class HumanoidWalk(Node):
         num_steps = int(goal_handle.request.num_steps)
         kin, standing = self._init_kinematics()
         frame, params, planner, pattern = plan_walk(standing, self._plan_config(), num_steps)
-        self.estimator.alpha = params.balance_state_alpha
-        if not self.estimator.set_walk_reference_frame():
+        initial_state = self.latest_state
+        projection = None
+        if initial_state is not None and initial_state.base_valid:
+            projection = WalkStateProjection(
+                message_to_estimate(initial_state).base, params.balance_state_alpha)
+        else:
             self.get_logger().warn(
                 'No base pose received: balance feedback disabled for this walk')
         balance = BalanceController(params)
@@ -443,10 +380,11 @@ class HumanoidWalk(Node):
             ref_feet = {side: np.array(ref.feet[side], dtype=float) for side in ('left', 'right')}
             com_plane = np.array(ref.com, dtype=float)
             # Stabiliser stage: measured state -> corrected CoM target and joint offsets.
-            est = self.estimator.estimate(
-                kin, frame, self.ground_height, self.contact_tolerance, balance.omega,
-                self.ankle_to_sole,
-            )
+            state_msg = self.latest_state
+            est = None
+            if projection is not None and state_msg is not None and state_msg.base_valid:
+                warn_stale_state(self, state_msg, self.state_timeout)
+                est = projection.project(message_to_estimate(state_msg), frame, balance.omega)
             out = balance.update(ref, est, dt) if est is not None else None
             if out is not None:
                 com_plane[:2] += out.com_offset

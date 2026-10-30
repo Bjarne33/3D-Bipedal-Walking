@@ -12,7 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/config', ['config/gait.yaml']),
+        ('share/' + package_name + '/config', ['config/gait.yaml', 'config/estimator.yaml']),
         ('share/' + package_name + '/launch', ['launch/walk.launch.py']),
     ],
     install_requires=['setuptools'],
@@ -28,6 +28,7 @@ setup(
             'com_visualizer = humanoid_control.nodes.com_visualizer:main',
             'humanoid_predefined_trajs = humanoid_control.nodes.humanoid_predefined_trajs:main',
             'humanoid_walk = humanoid_control.nodes.humanoid_walk:main',
+            'humanoid_estimator = humanoid_control.nodes.humanoid_estimator:main',
         ],
     },
 )

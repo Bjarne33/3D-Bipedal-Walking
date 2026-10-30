@@ -10,7 +10,8 @@ from humanoid_control.tools.balance import (
 from humanoid_control.tools.gait_params import GaitParams
 from humanoid_control.tools.state_estimator import (
     axial_to_plane,
-    BalanceStateEstimator,
+    RobotStateEstimator,
+    WalkStateProjection,
     cop_from_ankle_wrench,
 )
 
@@ -164,7 +165,7 @@ def test_cop_from_ankle_wrench_is_sign_independent(sign):
 
 
 def test_estimator_averages_wrench_samples_between_estimates():
-    est = BalanceStateEstimator()
+    est = RobotStateEstimator()
     est.set_wrench('left', [0.0, 0.0, 100.0], [1.0, 0.0, 0.0])
     est.set_wrench('left', [0.0, 0.0, 300.0], [3.0, 0.0, 0.0])
     est._consume_wrenches()
@@ -211,18 +212,19 @@ def test_estimator_does_not_touch_ik_state(model):
     kin, standing, pose = model
     frame = Frame(standing)
     q_before = kin.q.copy()
-    est = BalanceStateEstimator(alpha=1.0)
+    est = RobotStateEstimator()
     # Tilt the body to its right (towards the right foot) by 0.1 rad about the forward axis.
     fwd = frame.forward
     rot = pin.exp3(0.1 * fwd * np.sign(np.cross(frame.forward, frame.left) @ frame.up))
     up = rot @ np.array([0.0, 0.0, 1.0])
     assert frame.to_plane(up)[1] < 0.0
     est.set_base(pin.SE3.Identity(), 0.0)
-    est.set_walk_reference_frame()
+    projection = WalkStateProjection(est.base_world)
     est.set_base(pin.SE3(rot, np.zeros(3)), 0.0, [0.0, 0.1, 0.0], [0.0, 0.0, 0.0])
     est.set_joint_state(list(pose), list(pose.values()), [0.0] * len(pose))
     omega = np.sqrt(9.81 / 0.7)
-    out = est.estimate(kin, frame, -10.0, 0.005, omega, 0.05)
+    state = est.estimate(kin, -10.0, 0.005, 0.05)
+    out = projection.project(state, frame, omega)
     np.testing.assert_array_equal(kin.q, q_before)
     np.testing.assert_allclose(out.tilt, [0.1, 0.0], atol=1e-6)
     com_world = rot @ standing.com
@@ -235,9 +237,9 @@ def test_estimator_does_not_touch_ik_state(model):
 def test_estimator_support_and_zmp_come_from_loaded_feet(model):
     kin, standing, pose = model
     frame = Frame(standing)
-    est = BalanceStateEstimator()
+    est = RobotStateEstimator()
     est.set_base(pin.SE3.Identity(), 0.0)
-    est.set_walk_reference_frame()
+    projection = WalkStateProjection(est.base_world)
     est.set_joint_state(list(pose), list(pose.values()))
     feet = standing.feet
     ground = min((feet[s].position + feet[s].rotation @ c)[2]
@@ -245,7 +247,7 @@ def test_estimator_support_and_zmp_come_from_loaded_feet(model):
     # Left foot carries the weight at its ankle; the right foot is (nearly) unloaded.
     est.set_wrench('left', [0.0, 0.0, 300.0], np.zeros(3))
     est.set_wrench('right', [0.0, 0.0, 5.0], np.zeros(3))
-    out = est.estimate(kin, frame, ground, 0.005, 3.7, 0.05)
+    out = projection.project(est.estimate(kin, ground, 0.005, 0.05), frame, 3.7)
     left = frame.to_plane(standing.feet['left'].position)[:2]
     right = frame.to_plane(standing.feet['right'].position)[:2]
     assert out.zmp_valid
@@ -253,15 +255,14 @@ def test_estimator_support_and_zmp_come_from_loaded_feet(model):
     np.testing.assert_allclose(out.zmp, left, atol=2e-3)
     assert out.support_hull[:, 1].min() > right[1]  # the unloaded foot is not support
     est.set_wrench('right', [0.0, 0.0, 300.0], np.zeros(3))
-    out = est.estimate(kin, frame, ground, 0.005, 3.7, 0.05)
+    out = projection.project(est.estimate(kin, ground, 0.005, 0.05), frame, 3.7)
     assert out.support_hull[:, 1].min() < right[1] < left[1] < out.support_hull[:, 1].max()
     np.testing.assert_allclose(out.zmp, 0.5 * (left + right), atol=2e-3)
     # Without FT data, the feet touching the ground are support.
-    est = BalanceStateEstimator()
+    est = RobotStateEstimator()
     est.set_base(pin.SE3.Identity(), 0.0)
-    est.set_walk_reference_frame()
     est.set_joint_state(list(pose), list(pose.values()))
-    out = est.estimate(kin, frame, ground, 0.005, 3.7, 0.05)
+    out = projection.project(est.estimate(kin, ground, 0.005, 0.05), frame, 3.7)
     assert not out.zmp_valid and len(out.support_hull) >= 4
 
 

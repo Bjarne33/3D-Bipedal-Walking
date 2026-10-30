@@ -60,6 +60,7 @@ def test_launch_dependencies():
         ('controller_manager', 'spawner'),
         ('controller_manager', 'spawner'),
         ('humanoid_control', 'humanoid_startup'),
+        ('humanoid_control', 'humanoid_estimator'),
         ('humanoid_control', 'com_visualizer'),
         ('humanoid_control', 'humanoid_predefined_trajs'),
         ('rviz2', 'rviz2'),
