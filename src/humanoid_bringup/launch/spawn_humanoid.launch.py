@@ -1,12 +1,11 @@
-"""Launch Gazebo, spawn the humanoid and start the existing control nodes."""
+"""Launch a simulator backend, spawn the humanoid and start the existing control nodes."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
-from launch.actions import RegisterEventHandler
-from launch.event_handlers import OnProcessExit
+from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, PathJoinSubstitution, PythonExpression
+from launch.substitutions import PathJoinSubstitution, PythonExpression
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -24,6 +23,21 @@ def generate_launch_description():
     world = LaunchConfiguration('world')
     use_sim_time = LaunchConfiguration('use_sim_time')
     floating = LaunchConfiguration('floating')
+    visualization = LaunchConfiguration('visualization')
+    simulator = LaunchConfiguration('simulator')
+
+    simulator_arg = DeclareLaunchArgument(
+        'simulator',
+        default_value='gazebo',
+        choices=['gazebo', 'mujoco'],
+        description='Simulator backend',
+    )
+
+    visualization_arg = DeclareLaunchArgument(
+        'visualization',
+        default_value='false',
+        description='Launch RViz and the CoM visualizer',
+    )
 
     floating_arg = DeclareLaunchArgument(
         'floating',
@@ -34,15 +48,19 @@ def generate_launch_description():
     pause_arg = DeclareLaunchArgument(
         'pause',
         default_value='true',
-        description='Start Gazebo simulation paused',
+        description='Start the simulation paused',
     )
 
     world_arg = DeclareLaunchArgument(
         'world',
-        default_value=PathJoinSubstitution(
-            [FindPackageShare('humanoid_description'), 'worlds', 'world.sdf']
-        ),
-        description='Absolute path to world file',
+        default_value=PythonExpression([
+            "'", PathJoinSubstitution(
+                [FindPackageShare('humanoid_gazebo'), 'worlds', 'world.sdf']),
+            "' if '", simulator, "' == 'gazebo' else '", PathJoinSubstitution(
+                [FindPackageShare('humanoid_mujoco'), 'worlds', 'world.xml']),
+            "'",
+        ]),
+        description='Absolute path to the world file (SDF for Gazebo, MJCF for MuJoCo)',
     )
 
     use_sim_time_arg = DeclareLaunchArgument(
@@ -51,58 +69,25 @@ def generate_launch_description():
         description='Use simulation clock for TF and visualization timestamps',
     )
 
-    humanoid_xacro = PathJoinSubstitution(
-        [FindPackageShare('humanoid_description'), 'urdf', 'humanoid.xacro']
-    )
-    gazebo_launch_file = PathJoinSubstitution(
-        [FindPackageShare('gazebo_ros'), 'launch', 'gazebo.launch.py']
-    )
-
-    gazebo_params = PathJoinSubstitution(
-        [FindPackageShare('humanoid_description'), 'config', 'gazebo_params.yaml']
-    )
+    backend_arguments = list({
+        'pause': pause,
+        'world': world,
+        'use_sim_time': use_sim_time,
+        'floating': floating,
+    }.items())
 
     gazebo = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(gazebo_launch_file),
-        launch_arguments={
-            'pause': pause,
-            'world': world,
-            'params_file': gazebo_params,
-        }.items(),
+        PythonLaunchDescriptionSource(PathJoinSubstitution(
+            [FindPackageShare('humanoid_gazebo'), 'launch', 'simulation.launch.py'])),
+        condition=LaunchConfigurationEquals('simulator', 'gazebo'),
+        launch_arguments=backend_arguments,
     )
 
-    robot_description = {
-        'robot_description': Command(['xacro', ' ', humanoid_xacro, ' floating:=', floating])
-    }
-
-    robot_state_publisher = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        output='screen',
-        parameters=[robot_description, {'use_sim_time': use_sim_time}],
-    )
-
-    spawn_entity = Node(
-        package='gazebo_ros',
-        executable='spawn_entity.py',
-        arguments=[
-            '-entity', 'humanoid', '-topic', 'robot_description',
-            # Spawn higher when floating so the feet are lifted off the ground.
-            '-z', PythonExpression(["'0.15' if '", floating, "' == 'true' else '0.0'"]),
-        ],
-        output='screen',
-    )
-
-    joint_state_broadcaster = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager"],
-    )
-
-    effort_position_controller = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["effort_position_controller", "--controller-manager", "/controller_manager"],
+    mujoco = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution(
+            [FindPackageShare('humanoid_mujoco'), 'launch', 'simulation.launch.py'])),
+        condition=LaunchConfigurationEquals('simulator', 'mujoco'),
+        launch_arguments=backend_arguments,
     )
 
     humanoid_startup = Node(
@@ -129,6 +114,7 @@ def generate_launch_description():
     com_visualizer = Node(
         package='humanoid_control',
         executable='com_visualizer',
+        condition=IfCondition(visualization),
         name='com_visualizer',
         output='screen',
         parameters=[{
@@ -149,23 +135,10 @@ def generate_launch_description():
         }],
     )
 
-    load_joint_state_broadcaster = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=spawn_entity,
-            on_exit=[joint_state_broadcaster],
-        )
-    )
-
-    load_effort_position_controller = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=joint_state_broadcaster,
-            on_exit=[effort_position_controller],
-        )
-    )
-
     rviz = Node(
         package='rviz2',
         executable='rviz2',
+        condition=IfCondition(visualization),
         name='rviz2',
         output='screen',
         arguments=['-d', rviz_config_path],
@@ -173,15 +146,14 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        simulator_arg,
         pause_arg,
         world_arg,
         use_sim_time_arg,
         floating_arg,
+        visualization_arg,
         gazebo,
-        robot_state_publisher,
-        spawn_entity,
-        load_joint_state_broadcaster,
-        load_effort_position_controller,
+        mujoco,
         rviz,
         humanoid_startup,
         humanoid_estimator,

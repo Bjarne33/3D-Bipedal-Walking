@@ -1,7 +1,7 @@
 """Actuated joint order and standing pose shared by all control nodes.
 
-The order must match `config/ros2_control_controllers.yaml` and `urdf/ros2_control.xacro`
-in `humanoid_description`.
+The order must match the Gazebo controller YAML and `urdf/ros2_control.xacro` in
+`humanoid_gazebo`, and the gains in `config/mujoco_sim.yaml` in `humanoid_mujoco`.
 """
 
 LEG_JOINTS = ('hip_roll', 'hip_yaw', 'hip_pitch', 'knee', 'ankle_roll', 'ankle_pitch')

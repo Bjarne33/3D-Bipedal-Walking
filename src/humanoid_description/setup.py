@@ -27,7 +27,7 @@ data_files = [
     ('share/humanoid_description/launch', ['launch/humanoid_rviz.launch.py']),
 ]
 
-for folder in ['urdf', 'config', 'rviz', 'worlds']:
+for folder in ['urdf', 'rviz']:
     files = package_files(folder)
     for file in files:
         install_path = os.path.join('share/humanoid_description', os.path.dirname(file))
@@ -44,7 +44,7 @@ setup(
     zip_safe=True,
     maintainer='bjarne',
     maintainer_email='grotelueschen@campus.tu-berlin.de',
-    description='Robot model, Gazebo world, controllers and launch files for the biped.',
+    description='Simulator-independent robot model and RViz preview for the biped.',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

@@ -1,13 +1,15 @@
-"""Check launch composition without starting Gazebo or robot nodes."""
+"""Check launch composition without starting a simulator or robot nodes."""
 
 import ast
 import importlib.util
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchContext, LaunchDescription
-from launch.actions import DeclareLaunchArgument, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.utilities import perform_substitutions
+from launch_ros.actions import Node
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +17,7 @@ LAUNCH_FILE = ROOT / 'launch' / 'spawn_humanoid.launch.py'
 
 
 def test_launch_description():
-    """Check the existing launch arguments and controller event handlers are retained."""
+    """Check the existing arguments and visualization conditions around the backend include."""
     spec = importlib.util.spec_from_file_location('spawn_humanoid', LAUNCH_FILE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -25,14 +27,66 @@ def test_launch_description():
         entity.name: entity for entity in description.entities
         if isinstance(entity, DeclareLaunchArgument)
     }
-    assert set(arguments) == {'floating', 'pause', 'world', 'use_sim_time'}
+    assert set(arguments) == {
+        'simulator', 'floating', 'pause', 'world', 'use_sim_time', 'visualization',
+    }
     context = LaunchContext()
-    for name, value in {'floating': 'false', 'pause': 'true', 'use_sim_time': 'true'}.items():
+    defaults = {
+        'simulator': 'gazebo', 'floating': 'false', 'pause': 'true', 'use_sim_time': 'true',
+        'visualization': 'false',
+    }
+    for name, value in defaults.items():
         assert perform_substitutions(context, arguments[name].default_value) == value
-    handlers = [
-        entity for entity in description.entities if isinstance(entity, RegisterEventHandler)
+    nodes = {
+        entity.node_executable: entity
+        for entity in description.entities if isinstance(entity, Node)
+    }
+    for value in (None, 'false', 'true'):
+        context = LaunchContext()
+        if value is not None:
+            context.launch_configurations['visualization'] = value
+        arguments['visualization'].execute(context)
+        for executable in ('rviz2', 'com_visualizer'):
+            assert nodes[executable].condition.evaluate(context) == (value == 'true')
+        for executable, node in nodes.items():
+            if executable not in ('rviz2', 'com_visualizer'):
+                assert node.condition is None
+    backends = [
+        entity for entity in description.entities if isinstance(entity, IncludeLaunchDescription)
     ]
-    assert len(handlers) == 2
+    assert len(backends) == 2
+    for backend in backends:
+        assert {name for name, value in backend.launch_arguments} == {
+            'pause', 'world', 'use_sim_time', 'floating',
+        }
+
+
+def test_simulator_selection():
+    """Include exactly the selected backend and default to its world file."""
+    spec = importlib.util.spec_from_file_location('spawn_humanoid', LAUNCH_FILE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    arguments = {
+        entity.name: entity for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+    }
+    assert arguments['simulator'].choices == ['gazebo', 'mujoco']
+    backends = [
+        entity for entity in description.entities if isinstance(entity, IncludeLaunchDescription)
+    ]
+    worlds = {'gazebo': 'world.sdf', 'mujoco': 'world.xml'}
+    for simulator, world in worlds.items():
+        share = Path(get_package_share_directory(f'humanoid_{simulator}'))
+        context = LaunchContext()
+        context.launch_configurations['simulator'] = simulator
+        assert perform_substitutions(context, arguments['world'].default_value) == str(
+            share / 'worlds' / world)
+        included = [backend for backend in backends if backend.condition.evaluate(context)]
+        assert len(included) == 1
+        source = included[0].launch_description_source
+        source.get_launch_description(context)
+        assert source.location == str(share / 'launch' / 'simulation.launch.py')
 
 
 def test_launch_dependencies():
@@ -55,10 +109,6 @@ def test_launch_dependencies():
             nodes.append((keywords['package'], keywords['executable']))
     assert packages <= dependencies
     assert sorted(nodes) == sorted([
-        ('robot_state_publisher', 'robot_state_publisher'),
-        ('gazebo_ros', 'spawn_entity.py'),
-        ('controller_manager', 'spawner'),
-        ('controller_manager', 'spawner'),
         ('humanoid_control', 'humanoid_startup'),
         ('humanoid_control', 'humanoid_estimator'),
         ('humanoid_control', 'com_visualizer'),

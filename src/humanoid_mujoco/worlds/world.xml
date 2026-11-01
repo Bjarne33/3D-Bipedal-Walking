@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!-- MuJoCo world for the humanoid. The robot is added from the shared description at launch.
+     Angles in this file are in radians. -->
+<mujoco model="humanoid_world">
+  <!-- 1 ms step like the Gazebo world; the joint PD runs every step (1 kHz). The joint
+       damping of the position actuators needs an implicit integrator to stay stable. -->
+  <option timestep="0.001" integrator="implicitfast" cone="elliptic"/>
+
+  <!-- Friction coefficient 1 like the Gazebo foot contacts (mu1 = mu2 = 1). -->
+  <default>
+    <geom friction="1 0.005 0.0001"/>
+  </default>
+
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6" specular="0 0 0"/>
+    <!-- Start view direction; the viewer centres it on the robot (see viewer_distance). -->
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512"
+             rgb1="0.2 0.3 0.4" rgb2="0.3 0.4 0.5"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <light name="sun" pos="0 0 10" dir="0 0 -1" directional="true"/>
+    <geom name="ground_plane" type="plane" size="0 0 0.05" material="grid"/>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,32 @@
+mujoco_sim:
+  ros__parameters:
+    # Name of the emulated trajectory controller: the node subscribes to
+    # /<controller_name>/joint_trajectory and reports it as active.
+    controller_name: effort_position_controller
+    joint_state_broadcaster: joint_state_broadcaster
+    real_time_factor: 1.0
+    # Publish rates matching Gazebo: joint_state_broadcaster at the 1 kHz controller rate,
+    # gazebo_ros_p3d at 100 Hz and gazebo_ros_ft_sensor at 500 Hz. /clock is published
+    # every physics step (1 kHz, see worlds/world.xml).
+    joint_state_rate: 1000.0
+    odom_rate: 100.0
+    ft_rate: 500.0
+    # Start camera of the viewer: distance from the robot's centre of mass [m]. Azimuth and
+    # elevation come from <visual><global> in worlds/world.xml.
+    viewer_distance: 3.0
+    # PD gains (effort = p * position error + d * velocity error), copied from
+    # humanoid_gazebo/config/ros2_control_controllers.yaml and applied by MuJoCo position
+    # actuators with implicit damping. They are not tuned for MuJoCo.
+    gains:
+      left_hip_roll: {p: 2500.0, d: 100.0}
+      left_hip_yaw: {p: 2500.0, d: 20.0}
+      left_hip_pitch: {p: 2500.0, d: 100.0}
+      left_knee: {p: 2500.0, d: 60.0}
+      left_ankle_roll: {p: 2000.0, d: 3.0}
+      left_ankle_pitch: {p: 2000.0, d: 8.0}
+      right_hip_roll: {p: 2500.0, d: 100.0}
+      right_hip_yaw: {p: 2500.0, d: 20.0}
+      right_hip_pitch: {p: 2500.0, d: 100.0}
+      right_knee: {p: 2500.0, d: 60.0}
+      right_ankle_roll: {p: 2000.0, d: 3.0}
+      right_ankle_pitch: {p: 2000.0, d: 8.0}

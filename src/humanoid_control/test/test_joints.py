@@ -5,7 +5,7 @@ import yaml
 from humanoid_control.tools.joints import JOINT_NAMES, STANDING_POSE
 
 CONTROLLERS_YAML = os.path.join(
-    os.path.dirname(__file__), '..', '..', 'humanoid_description', 'config',
+    os.path.dirname(__file__), '..', '..', 'humanoid_gazebo', 'config',
     'ros2_control_controllers.yaml')
 
 
