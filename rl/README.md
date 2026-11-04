@@ -24,7 +24,7 @@ weights, thresholds and PPO settings are literature-based starting points, see t
 ```text
 rl/
   COLCON_IGNORE
-  pyproject.toml              Package humanoid_rl, extras [test] and [cuda]
+  pyproject.toml              Package humanoid_rl, extras [test] and [cuda] (non-Colab GPU)
   scripts/export_mjcf.py      Xacro -> training MJCF (needs ROS and the built workspace)
   humanoid_rl/
     assets/humanoid_rl.xml    Generated training model (committed)
@@ -182,7 +182,10 @@ noise and action latency. No pushes and no rough terrain.
 
 Open `notebooks/train_humanoid_colab.ipynb` in Colab with a GPU runtime. It mounts Google Drive,
 clones the repository (set `REPO_URL`/`BRANCH`; a private repository needs a token URL), installs
-`rl[cuda]`, runs the throughput benchmark, starts TensorBoard and trains. Everything is written to
+`rl` on top of Colab's preinstalled GPU jax (do not add the `[cuda]` extra there: a second CUDA
+plugin fails with `PJRT_Api already exists for device type cuda`), upgrades Flax to >= 0.12.7 with
+jax/jaxlib pinned to the preinstalled versions (older Flax fails on JAX >= 0.11 with
+`jax.core.get_opaque_trace_state ... removed`), runs the throughput benchmark, starts TensorBoard and trains. Everything is written to
 `DRIVE_ROOT/RUN_NAME`; after a disconnect, re-run the setup cells and the training cell to resume.
 Free Colab sessions are limited to a few hours, so a full curriculum will take several sessions.
 

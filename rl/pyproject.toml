@@ -10,10 +10,11 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "playground",
-    "brax>=0.14.1",
-    "mujoco>=3.3",
-    "mujoco-mjx>=3.3",
+    # Pinned to the versions the package was tested with.
+    "playground==0.1.0",
+    "brax==0.14.1",
+    "mujoco==3.17.0",
+    "mujoco-mjx==3.17.0",
     "jax",
     "ml_collections",
     "tensorboardX",
@@ -23,7 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest", "flake8"]
-# GPU jax for Colab / CUDA 12 machines.
+# GPU jax for CUDA 12 machines without a preinstalled GPU jax (not for Colab, which ships one).
 cuda = ["jax[cuda12]"]
 
 [project.scripts]
