@@ -4,3 +4,6 @@
 /.github/copilot-instructions.md
 /.vscode
 __pycache__/
+/rl/.venv
+/rl/runs
+*.egg-info/

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humanoid_rl"
+version = "0.1.0"
+description = "Curriculum RL walking controller for the humanoid biped (MuJoCo MJX + Brax PPO)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "playground",
+    "brax>=0.14.1",
+    "mujoco>=3.3",
+    "mujoco-mjx>=3.3",
+    "jax",
+    "ml_collections",
+    "tensorboardX",
+    "mediapy",
+    "numpy",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "flake8"]
+# GPU jax for Colab / CUDA 12 machines.
+cuda = ["jax[cuda12]"]
+
+[project.scripts]
+humanoid-rl-train = "humanoid_rl.train:main"
+
+[tool.setuptools]
+packages = ["humanoid_rl"]
+
+[tool.setuptools.package-data]
+humanoid_rl = ["assets/*.xml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: compiles the MJX environment or runs PPO (minutes on CPU)"]

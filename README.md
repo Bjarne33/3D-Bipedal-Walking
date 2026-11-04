@@ -9,6 +9,8 @@ It includes:
 - A joint-space test node (`humanoid_predefined_trajs`) that executes predefined step sequences.
 - A model-based walking node (`humanoid_walk`) with closed-loop balance.
 - CoM visualization markers in base and world frames.
+- A learning-based walking controller (`rl/`, ROS-free) trained with curriculum reinforcement
+  learning (Brax PPO on MuJoCo MJX); see [rl/README.md](rl/README.md).
 
 ## Requirements
 
@@ -16,6 +18,8 @@ It includes:
 - ROS 2 Humble
 - Gazebo Classic (`gazebo_ros_pkgs`, `gazebo_ros2_control`)
 - MuJoCo 3.1.6 Python bindings (only for `simulator:=mujoco`)
+- RL controller only: a separate Python virtual environment for `rl/` (MuJoCo >= 3.4, MJX,
+  Playground, Brax, jax) and a CUDA GPU for training, e.g. Google Colab
 
 ## 1) Install ROS 2 Humble
 
@@ -176,7 +180,22 @@ src/
                             gait modules (footstep planner, LIPM/DCM, swing trajectory, walking pattern,
                             plan, balance, state estimator, support polygon, gait_params)
     test/                 Unit tests and style checks
+rl/                       Learning-based walking controller (not a colcon package, COLCON_IGNORE):
+  humanoid_rl/            MJX environment, curriculum rewards, PPO curriculum driver, export
+  scripts/export_mjcf.py  Generates the training MJCF from the description Xacro
+  notebooks/              Google Colab training notebook
+  tests/                  Unit and end-to-end pipeline tests
 ```
+
+## Learning-based walking controller (`rl/`)
+
+An independent walking policy trained with PPO (Brax) on MuJoCo MJX, using a three-phase reward
+curriculum: posture and balance, weight shifting and foot clearance, low-speed forward walking.
+Training targets a single GPU such as the free Google Colab tier
+(`rl/notebooks/train_humanoid_colab.ipynb`). The package has its own virtual environment and
+does not use ROS at runtime; the trained policy is exported as a NumPy `.npz`. No trained policy
+is included yet. Setup, design (observations, actions, rewards, thresholds) and the tuning
+checklist are in [rl/README.md](rl/README.md).
 
 ## Package Overview
 
