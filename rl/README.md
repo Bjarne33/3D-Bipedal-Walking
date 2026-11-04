@@ -185,7 +185,10 @@ clones the repository (set `REPO_URL`/`BRANCH`; a private repository needs a tok
 `rl` on top of Colab's preinstalled GPU jax (do not add the `[cuda]` extra there: a second CUDA
 plugin fails with `PJRT_Api already exists for device type cuda`), upgrades Flax to >= 0.12.7 with
 jax/jaxlib pinned to the preinstalled versions (older Flax fails on JAX >= 0.11 with
-`jax.core.get_opaque_trace_state ... removed`), runs the throughput benchmark, starts TensorBoard and trains. Everything is written to
+`jax.core.get_opaque_trace_state ... removed`), runs the throughput benchmark, starts TensorBoard and trains. Brax 0.14 still
+calls JAX APIs that newer JAX removed (`jax.device_put_replicated`, `jax.device_put_sharded`,
+`jax.config.jax_pmap_shmap_merge`); `humanoid_rl/_jax_compat.py` restores them on import when they
+are missing, so training also runs on Colab's current JAX. Everything is written to
 `DRIVE_ROOT/RUN_NAME`; after a disconnect, re-run the setup cells and the training cell to resume.
 Free Colab sessions are limited to a few hours, so a full curriculum will take several sessions.
 
