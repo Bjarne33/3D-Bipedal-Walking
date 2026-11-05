@@ -1,0 +1,13 @@
+# Goal: commanded forward speed [m/s] (clamped to the policy's training range) and walk
+# duration [s]. duration = 0 walks until the goal is canceled.
+float64 forward_speed
+float64 duration
+---
+bool success
+float64 elapsed
+string message
+---
+float64 elapsed
+float64 forward_speed_command
+float64 forward_speed_measured
+float64 gait_phase

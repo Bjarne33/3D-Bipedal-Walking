@@ -14,19 +14,20 @@ mujoco_sim:
     # Start camera of the viewer: distance from the robot's centre of mass [m]. Azimuth and
     # elevation come from <visual><global> in worlds/world.xml.
     viewer_distance: 3.0
-    # PD gains (effort = p * position error + d * velocity error), copied from
-    # humanoid_gazebo/config/ros2_control_controllers.yaml and applied by MuJoCo position
-    # actuators with implicit damping. They are not tuned for MuJoCo.
+    # PD gains (effort = p * position error + d * velocity error), copied from KP/KD in
+    # rl/humanoid_rl/constants.py so that RL policies run with their training gains. They are
+    # applied by MuJoCo position actuators with implicit damping and are softer than the
+    # Gazebo gains in humanoid_gazebo/config/ros2_control_controllers.yaml.
     gains:
-      left_hip_roll: {p: 2500.0, d: 100.0}
-      left_hip_yaw: {p: 2500.0, d: 20.0}
-      left_hip_pitch: {p: 2500.0, d: 100.0}
-      left_knee: {p: 2500.0, d: 60.0}
-      left_ankle_roll: {p: 2000.0, d: 3.0}
-      left_ankle_pitch: {p: 2000.0, d: 8.0}
-      right_hip_roll: {p: 2500.0, d: 100.0}
-      right_hip_yaw: {p: 2500.0, d: 20.0}
-      right_hip_pitch: {p: 2500.0, d: 100.0}
-      right_knee: {p: 2500.0, d: 60.0}
-      right_ankle_roll: {p: 2000.0, d: 3.0}
-      right_ankle_pitch: {p: 2000.0, d: 8.0}
+      left_hip_roll: {p: 300.0, d: 8.0}
+      left_hip_yaw: {p: 200.0, d: 5.0}
+      left_hip_pitch: {p: 300.0, d: 8.0}
+      left_knee: {p: 350.0, d: 10.0}
+      left_ankle_roll: {p: 150.0, d: 4.0}
+      left_ankle_pitch: {p: 150.0, d: 4.0}
+      right_hip_roll: {p: 300.0, d: 8.0}
+      right_hip_yaw: {p: 200.0, d: 5.0}
+      right_hip_pitch: {p: 300.0, d: 8.0}
+      right_knee: {p: 350.0, d: 10.0}
+      right_ankle_roll: {p: 150.0, d: 4.0}
+      right_ankle_pitch: {p: 150.0, d: 4.0}

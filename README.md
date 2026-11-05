@@ -8,6 +8,8 @@ It includes:
 - Startup logic for controller readiness and initial pose.
 - A joint-space test node (`humanoid_predefined_trajs`) that executes predefined step sequences.
 - A model-based walking node (`humanoid_walk`) with closed-loop balance.
+- An RL walking node (`humanoid_rl_walk`) that deploys the trained policy
+  (`humanoid_control/policies/policy.npz`) in the MuJoCo backend.
 - CoM visualization markers in base and world frames.
 - A learning-based walking controller (`rl/`, ROS-free) trained with curriculum reinforcement
   learning (Brax PPO on MuJoCo MJX); see [rl/README.md](rl/README.md).
@@ -159,6 +161,16 @@ ros2 launch humanoid_control walk.launch.py
 ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"
 ```
 
+To deploy the trained RL policy instead, start the MuJoCo simulation, wait until the robot is at
+rest, then start the RL walking node and send a goal (`forward_speed` in m/s, `duration` in s,
+`duration: 0.0` walks until canceled):
+
+```bash
+ros2 launch humanoid_bringup spawn_humanoid.launch.py simulator:=mujoco
+ros2 launch humanoid_control rl_walk.launch.py
+ros2 action send_goal /humanoid_rl_walk/rl_walk humanoid_interfaces/action/RlWalk "{forward_speed: 0.15, duration: 10.0}"
+```
+
 ## Repository Structure
 
 ```text
@@ -167,18 +179,22 @@ src/
   humanoid_gazebo/        Gazebo Classic model extensions, physics, controllers and launch
   humanoid_mujoco/        MuJoCo scene builder, ROS bridge node emulating the Gazebo interface, launch
   humanoid_description/   Simulator-independent Xacro model, RViz config and preview
-  humanoid_interfaces/    Walk action, StepN service, BalanceState and RobotState messages
+  humanoid_interfaces/    Walk and RlWalk actions, StepN service, BalanceState and RobotState messages
   humanoid_control/
     config/gait.yaml      Parameters of humanoid_walk
     config/estimator.yaml Sensor inputs, geometry and rate of humanoid_estimator
+    config/rl_walk.yaml   Parameters of humanoid_rl_walk
     launch/walk.launch.py Starts humanoid_walk with gait.yaml
+    launch/rl_walk.launch.py Starts humanoid_rl_walk with rl_walk.yaml
+    policies/policy.npz   Trained RL policy exported from rl/ (default of humanoid_rl_walk)
     humanoid_control/
       nodes/              humanoid_startup, humanoid_predefined_trajs, humanoid_walk,
-                          humanoid_estimator, com_visualizer
+                          humanoid_rl_walk, humanoid_estimator, com_visualizer
       tools/              ROS-independent modules used by the nodes:
                             joints.py (joint order, standing pose), humanoid_kinematics.py (Pinocchio/Pink IK),
                             gait modules (footstep planner, LIPM/DCM, swing trajectory, walking pattern,
-                            plan, balance, state estimator, support polygon, gait_params)
+                            plan, balance, state estimator, support polygon, gait_params),
+                            rl_policy.py (NumPy RL policy and observation)
     test/                 Unit tests and style checks
 rl/                       Learning-based walking controller (not a colcon package, COLCON_IGNORE):
   humanoid_rl/            MJX environment, curriculum rewards, PPO curriculum driver, export
@@ -193,8 +209,8 @@ An independent walking policy trained with PPO (Brax) on MuJoCo MJX, using a thr
 curriculum: posture and balance, weight shifting and foot clearance, low-speed forward walking.
 Training targets a single GPU such as the free Google Colab tier
 (`rl/notebooks/train_humanoid_colab.ipynb`). The package has its own virtual environment and
-does not use ROS at runtime; the trained policy is exported as a NumPy `.npz`. No trained policy
-is included yet. Setup, design (observations, actions, rewards, thresholds) and the tuning
+does not use ROS at runtime; the trained policy is exported as a NumPy `.npz`. The deployed
+policy is `src/humanoid_control/policies/policy.npz`, run in ROS by `humanoid_rl_walk`. Setup, design (observations, actions, rewards, thresholds) and the tuning
 checklist are in [rl/README.md](rl/README.md).
 
 ## Package Overview
@@ -262,12 +278,17 @@ MuJoCo integration; depends on the shared description, not on control or bringup
   by bringup). It sets `PYGLFW_LIBRARY_VARIANT=x11` for `mujoco_sim` unless the variable is
   already set (see Known issues).
 - `config/mujoco_sim.yaml`: Publish rates, emulated controller names, viewer start distance and
-  PD gains (copied from the Gazebo controller configuration, not tuned for MuJoCo).
+  PD gains. The gains are the RL training gains (`KP`/`KD` in `rl/humanoid_rl/constants.py`,
+  kp 150-350, kd 4-10), much softer than the Gazebo gains, so that RL policies see their
+  training dynamics. `humanoid_mujoco/model.py` likewise adds the training armature
+  (0.02 kg m^2) to every actuated joint. With these gains the standing robot rests with about
+  4-5 deg forward tilt from the static ankle droop; `humanoid_walk` and the predefined motions were
+  tuned with the Gazebo gains and have not been revalidated in MuJoCo with them.
 - `worlds/world.xml`: MJCF world (1 ms time step, `implicitfast` integrator, ground plane,
   viewer start direction).
 
 The joint PD law `p (q_d - q) + d (v_d - q_dot)`, limited by the URDF effort limit, is the same
-as in Gazebo. It is realized with MuJoCo position actuators (`kp`, `kv`) because explicit
+as in Gazebo (with different gains). It is realized with MuJoCo position actuators (`kp`, `kv`) because explicit
 effort PD with these gains is unstable on MuJoCo's soft contacts; the world must therefore use
 an implicit integrator (`implicit` or `implicitfast`). Run its tests with
 `python3 -m pytest src/humanoid_mujoco/test`.
@@ -319,6 +340,13 @@ Control and visualization nodes for startup and walking behavior.
 	- Run: `ros2 launch humanoid_control walk.launch.py`, then e.g. `ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"`.
 	- Unit tests: `python3 -m pytest src/humanoid_control/test`.
 	- Parameters (`gait.yaml`) override the `GaitParams` defaults; `step_width` and `com_height` <= 0 are derived from the standing pose.
+- `humanoid_rl_walk` (RL policy deployment, `tools/rl_policy.py`; MuJoCo backend):
+	- Loads the exported policy (`policy_path`, default: the installed `policies/policy.npz`) with NumPy only and checks its joint order against `tools/joints.py`.
+	- Runs one policy step per `/humanoid_estimator/state` message (50 Hz = the policy's `ctrl_dt`). The observation mirrors the training environment: base-frame gyro and projected gravity (from the world-frame base pose and angular velocity), forward speed command, joint positions relative to the standing pose, joint velocities, last action and the gait clock (starting at phase 0 for every goal).
+	- Publishes `standing pose + action_scale * action`, clipped to the URDF limits, as a single-point trajectory with `time_from_start = target_time_from_start` (default 0: applied at once, like training).
+	- Action `/humanoid_rl_walk/rl_walk` (`humanoid_interfaces/action/RlWalk`): `forward_speed` (clamped to the trained range [0.05, 0.2] m/s with a warning) and `duration` (0 = until canceled). Feedback reports elapsed time, commanded and measured (CoM) forward speed and the gait phase. Cancel, the end of `duration` or `/humanoid_rl_walk/stop` command the standing pose at once.
+	- Parameters in `config/rl_walk.yaml`; run with `ros2 launch humanoid_control rl_walk.launch.py` (optional `policy_path:=...`).
+	- Headless MuJoCo trials (0.1-0.2 m/s, 8-10 s, plus cancel and stop): the robot walked forward without falling during the walk at about 0.6-0.8 of the commanded speed, with lateral and heading drift (the policy has no heading feedback; about 5-15 deg yaw per run). The abrupt switch to the standing pose causes 11-13 deg tilt transients; one of eight runs ended with the robot fallen (unmonitored, most likely at the switch).
 - Foot force/torque sensing:
 	- `libgazebo_ros_ft_sensor.so` is attached to both ankle-pitch joints and publishes `/left_foot_ft` and `/right_foot_ft`. In MuJoCo, force/torque sensors at the foot bodies publish the same topics.
 	- These topics are consumed by `humanoid_estimator`, including when walking is idle or balance feedback is disabled.

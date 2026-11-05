@@ -5,6 +5,9 @@ MuJoCo integrates its damping implicitly, which keeps the stiff joint PD stable 
 feet are in contact (the same gains applied as explicit motor torques make the standing
 robot oscillate and fall). The trajectory tracker turns the desired state into the
 equivalent position setpoint, so the force equals the trajectory controller's PD law.
+
+Every actuated joint also gets the rotor armature of the RL training model
+(`rl/humanoid_rl/constants.py`), which the URDF does not describe.
 """
 
 import os
@@ -27,6 +30,9 @@ FT_SENSORS: Dict[str, str] = {
 # default self_collide=false; world geoms keep the MuJoCo defaults (1/1).
 ROBOT_CONTYPE = '2'
 ROBOT_CONAFFINITY = '1'
+# Reflected rotor inertia of every actuated joint [kg m^2], equal to `ARMATURE` in
+# `rl/humanoid_rl/constants.py` so that RL policies see the dynamics they were trained on.
+ARMATURE = 0.02
 
 
 def is_floating(urdf: str) -> bool:
@@ -81,7 +87,7 @@ def urdf_to_mjcf(urdf: str) -> ET.Element:
 
 def _add_robot_elements(robot: ET.Element, floating: bool, spawn_z: float,
                         gains: Dict[str, Tuple[float, float]]) -> None:
-    """Add the base joint, geom names, sensor sites, actuators and sensors to the robot.
+    """Add the base joint, geom names, sensor sites, actuators, armature and sensors.
 
     Args:
         robot: Root `<mujoco>` element of the converted robot; modified in place.
@@ -125,6 +131,7 @@ def _add_robot_elements(robot: ET.Element, floating: bool, spawn_z: float,
         p_gain, d_gain = gains.get(name, (0.0, 0.0))
         if p_gain <= 0.0:
             raise ValueError(f'Joint {name!r} needs a positive p gain')
+        joint.set('armature', f'{ARMATURE:g}')
         # The importer converts the URDF effort limit to the joint's actuatorfrcrange,
         # which clamps the actuator force like Gazebo's effort limit.
         ET.SubElement(actuators, 'position', name=name, joint=name,

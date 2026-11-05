@@ -99,6 +99,10 @@ brittle and jerky, whereas compliant joints are the common choice for learned lo
 (legged_gym, Playground humanoids). The robot stands stably with these gains and zero action,
 including at the domain randomization extremes. A policy trained with them expects the same gains
 on deployment.
+The ROS MuJoCo backend (`src/humanoid_mujoco/config/mujoco_sim.yaml` and `model.py`) uses these
+gains and `ARMATURE` (hardcoded copies); keep them in sync when changing `constants.py`. The
+`humanoid_rl_walk` node in `humanoid_control` deploys `src/humanoid_control/policies/policy.npz`
+there.
 
 ## Design
 

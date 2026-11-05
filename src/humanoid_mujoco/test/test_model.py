@@ -1,5 +1,6 @@
 """Check the MuJoCo scene built from the shared description."""
 
+import importlib.util
 import math
 from pathlib import Path
 
@@ -8,12 +9,15 @@ import mujoco
 import numpy as np
 import pytest
 import xacro
+import yaml
 
 from humanoid_mujoco.model import actuated_joints, build_model, build_scene_xml, FT_SENSORS
-from humanoid_mujoco.model import FREE_JOINT_NAME, set_start_camera
+from humanoid_mujoco.model import ARMATURE, FREE_JOINT_NAME, set_start_camera
 from humanoid_mujoco.trajectory import TrajectoryTracker
 
 WORLD = str(Path(__file__).resolve().parents[1] / 'worlds' / 'world.xml')
+CONFIG = Path(__file__).resolve().parents[1] / 'config' / 'mujoco_sim.yaml'
+RL_CONSTANTS = Path(__file__).resolve().parents[3] / 'rl' / 'humanoid_rl' / 'constants.py'
 JOINT_NAMES = [
     f'{side}_{joint}' for side in ('left', 'right')
     for joint in ('hip_roll', 'hip_yaw', 'hip_pitch', 'knee', 'ankle_roll', 'ankle_pitch')
@@ -78,6 +82,7 @@ def test_actuators_follow_gains_and_effort_limits(free_model):
         limit = EFFORT_LIMITS[name.split('_', 1)[1]]
         assert model.jnt_actfrclimited[joint.id]
         assert model.jnt_actfrcrange[joint.id] == pytest.approx([-limit, limit])
+        assert model.dof_armature[joint.dofadr[0]] == pytest.approx(ARMATURE)
     assert model.opt.integrator == mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     assert model.opt.timestep == pytest.approx(0.001)
 
@@ -123,13 +128,13 @@ def test_start_camera_centres_robot(free_model):
 
 
 def test_startup_pose_is_stable():
-    """Reach the standing pose with the Gazebo gains and carry the weight on both ankles."""
-    gains = {
-        f'{side}_{joint}': gain for side in ('left', 'right') for joint, gain in (
-            ('hip_roll', (2500.0, 100.0)), ('hip_yaw', (2500.0, 20.0)),
-            ('hip_pitch', (2500.0, 100.0)), ('knee', (2500.0, 60.0)),
-            ('ankle_roll', (2000.0, 3.0)), ('ankle_pitch', (2000.0, 8.0)))
-    }
+    """Come to rest near the standing pose with the configured gains, weight on both ankles.
+
+    The soft RL gains leave a static gravity droop (mostly in the ankle pitch joints), so the
+    tolerances are wider than the tracking accuracy of the stiff Gazebo gains.
+    """
+    configured = yaml.safe_load(CONFIG.read_text())['mujoco_sim']['ros__parameters']['gains']
+    gains = {name: (gain['p'], gain['d']) for name, gain in configured.items()}
     model = build_model(_urdf(False), WORLD, gains)
     data = mujoco.MjData(model)
     qpos_adr = [model.jnt_qposadr[model.joint(name).id] for name in JOINT_NAMES]
@@ -138,13 +143,30 @@ def test_startup_pose_is_stable():
     standing = {'hip_pitch': 0.275, 'knee': -0.5, 'ankle_pitch': 0.25}
     target = [standing.get(name.split('_', 1)[1], 0.0) for name in JOINT_NAMES]
     tracker.set_trajectory(0.0, 0.0, JOINT_NAMES, [(2.0, target, None)])
-    while data.time < 4.0:
+    while data.time < 6.0:
         data.ctrl[:] = tracker.setpoint(data.time)
         mujoco.mj_step(model, data)
     tilt = 2.0 * math.acos(min(1.0, abs(data.qpos[3])))
-    assert tilt < math.radians(3.0)
-    assert np.abs(data.qpos[qpos_adr] - target).max() < 0.01
+    assert tilt < math.radians(8.0)
+    assert np.abs(data.qpos[qpos_adr] - target).max() < 0.1
+    assert np.abs(data.qvel).max() < 0.01
     # Each ankle carries half the weight above it (1.1 kg of foot and ankle per leg).
     expected = -0.5 * (30.6 - 2.2) * 9.81
     for name in FT_SENSORS:
         assert data.sensor(f'{name}_force').data[2] == pytest.approx(expected, rel=0.1)
+
+
+def test_gains_and_armature_match_rl_training():
+    """Keep the hardcoded gains and armature equal to the RL training constants."""
+    if not RL_CONSTANTS.exists():
+        pytest.skip(f'{RL_CONSTANTS} not found')
+    spec = importlib.util.spec_from_file_location('rl_constants', RL_CONSTANTS)
+    constants = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(constants)
+    gains = yaml.safe_load(CONFIG.read_text())['mujoco_sim']['ros__parameters']['gains']
+    assert sorted(gains) == sorted(JOINT_NAMES)
+    for name, gain in gains.items():
+        joint = name.split('_', 1)[1]
+        assert gain['p'] == pytest.approx(constants.KP[joint])
+        assert gain['d'] == pytest.approx(constants.KD[joint])
+    assert ARMATURE == pytest.approx(constants.ARMATURE)

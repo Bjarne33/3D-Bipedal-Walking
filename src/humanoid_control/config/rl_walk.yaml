@@ -1,0 +1,13 @@
+humanoid_rl_walk:
+  ros__parameters:
+    # Exported policy (.npz); empty = policies/policy.npz installed with humanoid_control.
+    policy_path: ''
+    controller_name: effort_position_controller
+    # Forward speed range of the training command (rl/humanoid_rl/config.py, phase 3);
+    # goal speeds outside it are clamped with a warning.
+    min_forward_speed: 0.05
+    max_forward_speed: 0.2
+    # time_from_start of the published targets. 0 applies each target at once, like the
+    # training environment, which sets the actuator setpoints once per policy step.
+    target_time_from_start: 0.0
+    state_timeout_sec: 0.2
