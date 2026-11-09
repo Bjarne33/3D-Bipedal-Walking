@@ -11,6 +11,7 @@ It includes:
 - An RL walking node (`humanoid_rl_walk`) that deploys the trained policy
   (`humanoid_control/policies/policy.npz`) in the MuJoCo backend.
 - CoM visualization markers in base and world frames.
+- Floating joint-controller PD tuning with an rqt panel and PlotJuggler 4.
 - A learning-based walking controller (`rl/`, ROS-free) trained with curriculum reinforcement
   learning (Brax PPO on MuJoCo MJX); see [rl/README.md](rl/README.md).
 
@@ -171,6 +172,108 @@ ros2 launch humanoid_control rl_walk.launch.py
 ros2 action send_goal /humanoid_rl_walk/rl_walk humanoid_interfaces/action/RlWalk "{forward_speed: 0.15, duration: 10.0}"
 ```
 
+## Joint PD tuning
+
+`humanoid_tuning` runs an isolated, pinned-base experiment with either simulator. Do not run
+normal bringup, walking nodes, or another trajectory publisher in the same ROS domain.
+It tunes the existing backend controller, not a separate approximation of it.
+
+Install the ROS UI dependencies through rosdep (or
+`sudo apt install ros-humble-rqt-gui ros-humble-rqt-gui-py`), plus
+[PlotJuggler 4](https://github.com/PlotJuggler/PlotJuggler) and its **ROS 2 Topic Subscriber**
+and **ROS CDR Parser** marketplace extensions. PlotJuggler is an external desktop application,
+not a pip/ROS dependency installed by this package. The installed `plotjuggler4` executable must
+be on PATH. Source the built workspace before launching so its ROS message types are available.
+
+```bash
+colcon build --symlink-install --packages-up-to humanoid_tuning
+source install/setup.bash
+ros2 launch humanoid_tuning tuning.launch.py simulator:=gazebo
+# Alternatively (use a separate session, not concurrently in the same domain):
+ros2 launch humanoid_tuning tuning.launch.py simulator:=mujoco
+```
+
+The launch includes only the selected simulator backend and the standalone rqt panel; it
+always uses `floating:=true`. The panel checks the published robot description and rejects an
+unpinned robot or competing trajectory publishers. Opening the panel from the rqt menu defaults
+to Gazebo; to attach it explicitly to an already-running, isolated floating backend, use:
+
+```bash
+ros2 run humanoid_tuning tuning_panel --simulator mujoco
+```
+
+### Experiment sequence
+
+1. Select the test joint, edit its P/D values and click **Apply gains**. Confirmed applied
+   values are displayed separately from unapplied edits. Gains use native **N m/rad** and
+   **N m s/rad** units, require finite **P > 0, D >= 0**, and can only be applied between tests.
+   Gazebo Humble 2.26 loads gains at configuration: the panel deactivates the controller,
+   pauses physics while editing parameters, resumes physics, reconfigures, and reactivates.
+   Configure/switch operations need the update loop running. MuJoCo commits accepted parameter
+   batches to both actuator coefficients and trajectory-tracker gains under the simulation lock.
+2. Edit the holding pose (all twelve joints start at zero) and click **Prepare**. It moves
+   smoothly to that pose over **2 s**, then requires every joint to remain within **0.02 rad**
+   position error and **0.02 rad/s** speed for **0.5 s**. Preparation times out after **15 s**.
+   Timings and tolerances are editable; angles/speeds in the UI are **degrees/degrees per second**.
+   Zero is the knee's upper limit: a positive knee target is not permitted.
+3. Enter an **absolute** target angle and click **Start step**. A zero-time trajectory point
+   jumps the controller's position reference, with zero desired velocity; it is not a short
+   interpolated ramp. Other joints keep their holding references. Observation defaults to
+   **5 s**, starting when backend feedback confirms the target and zero desired velocity,
+   after which the target remains held. An unconfirmed step becomes a visible error after
+   one wall second. Click **Prepare** before repeating.
+4. **Stop (pause)** pauses physics and invalidates readiness. **Prepare** resumes physics and
+   returns to the holding pose. Limit exceedances warn but do not pause physics. Missing/stale
+   feedback or failed preparation shows an error and disables Start without automatically pausing.
+   Service waits have wall-clock deadlines, including while simulation time is stopped.
+
+The test joint is always plotted; check additional joints in the pose table to inspect coupling.
+**PlotJuggler 4.0 requires manual subscriber setup:** its layout format cannot automatically
+restore a live streaming source. The panel opens PlotJuggler, but does not pretend a saved
+layout starts that connection:
+
+1. In PlotJuggler, start **ROS 2 Topic Subscriber** and select the checked joints'
+   `/humanoid_tuning/<joint>/state` topics.
+2. Enable embedded/header timestamps, so the x-axis uses simulation time, not ROS receipt time.
+3. Click **Copy layout path** in the panel, then use PlotJuggler's **Load layout** dialog and
+   paste that path. The generated PJ4 layout creates a tab per selected joint, with separate
+   position (actual/reference, deg), velocity (deg/s), and effort (N m) plots. Velocity and
+   effort include the positive/negative URDF limits. Step rendering avoids smoothing references.
+4. Changing plot selection or clicking **Open / reset plots** starts a fresh PlotJuggler window
+   to prevent mixed histories; reconnect its subscriber and load the regenerated layout.
+   The panel owns this window and closes it on shutdown. No response recordings are saved.
+
+Telemetry uses `humanoid_interfaces/msg/JointTuningState`: scalar, unit-labelled fields, a
+joint-state sample timestamp, and a separate `reference_stamp`. References come from actual
+`/effort_position_controller/controller_state` feedback, never from a cached command. The worker
+matches the most recent nonfuture reference within **10 ms** of each measured sample; it does not
+fabricate missing reference values. Missing/alignment-stale streams invalidate readiness after
+**1 wall second**. Acquisition follows the backend's 1 kHz joint stream independently of Qt's
+20 Hz refresh; overloaded consumers may drop samples. No claim is made that displayed URDF
+velocity limits are enforced by both physics engines.
+
+### Export and limitations
+
+**Export gains** creates a complete backend-native YAML in a **new user-selected file**, replacing
+only confirmed applied P/D entries. It preserves all unrelated configuration values, including
+untuned joints, Gazebo I/feed-forward gains, controller definitions and simulator settings.
+Comments/formatting may change. Existing files and source/build/install/log destinations are
+rejected. There is deliberately **no import/loading function or new loading launch argument**.
+Export does not overwrite the backend's source configuration.
+
+Floating tests still include gravity and inter-joint coupling. They do not validate stance
+contacts, balance or walking. MuJoCo's armature and implicit damping differ from Gazebo's
+explicit controller, so tune each backend independently; matching gain numbers need not produce
+matching responses.
+
+Tests (the real-backend tests create and stop their own isolated simulator):
+
+```bash
+python3 -m pytest src/humanoid_tuning/test src/humanoid_mujoco/test src/humanoid_gazebo/test
+HUMANOID_TUNING_TEST_BACKEND=mujoco python3 -m pytest src/humanoid_tuning/test/test_tuning_integration.py
+HUMANOID_TUNING_TEST_BACKEND=gazebo python3 -m pytest src/humanoid_tuning/test/test_tuning_integration.py
+```
+
 ## Repository Structure
 
 ```text
@@ -179,7 +282,8 @@ src/
   humanoid_gazebo/        Gazebo Classic model extensions, physics, controllers and launch
   humanoid_mujoco/        MuJoCo scene builder, ROS bridge node emulating the Gazebo interface, launch
   humanoid_description/   Simulator-independent Xacro model, RViz config and preview
-  humanoid_interfaces/    Walk and RlWalk actions, StepN service, BalanceState and RobotState messages
+  humanoid_interfaces/    Actions, services, RobotState, BalanceState and JointTuningState messages
+  humanoid_tuning/        Floating PD experiments, rqt panel, native YAML export and PJ4 layouts
   humanoid_control/
     config/gait.yaml      Parameters of humanoid_walk
     config/estimator.yaml Sensor inputs, geometry and rate of humanoid_estimator
@@ -268,6 +372,12 @@ MuJoCo integration; depends on the shared description, not on control or bringup
 	- `/clock` (every step), `/joint_states` (1000 Hz), `/odom` (100 Hz, `world -> base` ground
 	  truth with the twist in `world`), `/left_foot_ft` and `/right_foot_ft` (500 Hz).
 	- `/effort_position_controller/joint_trajectory` input.
+	- `/effort_position_controller/controller_state` at the joint-state rate: reference,
+	  feedback and error sampled/stamped before the physics step, matching the reference used
+	  for that step. Joint states are published after stepping; applied efforts correspond to
+	  that integration step. The tuning telemetry retains the separate reference timestamp.
+	- Atomic runtime `gains.<joint>.p/d` parameter changes (P > 0, D >= 0); rejected batches
+	  change neither parameters nor effective actuator/tracker gains.
 	- `/pause_physics`, `/unpause_physics` and `/controller_manager/list_controllers`, which reports
 	  `joint_state_broadcaster` and `effort_position_controller` as active.
 	- An optional passive viewer. Its start camera looks at the robot's centre of mass from

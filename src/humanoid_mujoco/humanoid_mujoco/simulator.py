@@ -17,6 +17,7 @@ import threading
 import time
 
 from builtin_interfaces.msg import Time
+from control_msgs.msg import JointTrajectoryControllerState
 from controller_manager_msgs.msg import ControllerState
 from controller_manager_msgs.srv import ListControllers
 from geometry_msgs.msg import WrenchStamped
@@ -24,6 +25,7 @@ import mujoco
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import JointState
@@ -98,11 +100,14 @@ class MujocoSimulator(Node):
         self.base_frame = str(self.get_parameter('base_frame').value)
 
         self.lock = threading.Lock()
+        self.add_on_set_parameters_callback(self._validate_gains)
         self.paused = bool(self.get_parameter('pause').value)
         self.running = True
 
         self.clock_pub = self.create_publisher(Clock, '/clock', 10)
         self.joint_state_pub = self.create_publisher(JointState, '/joint_states', 10)
+        self.controller_state_pub = self.create_publisher(
+            JointTrajectoryControllerState, f'/{self.controller_name}/controller_state', 10)
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
         self.ft_pubs = {name: self.create_publisher(WrenchStamped, f'/{name}', 10)
                         for name in FT_SENSORS}
@@ -211,6 +216,8 @@ class MujocoSimulator(Node):
     def _step(self) -> None:
         """Apply the actuator setpoints, advance one physics step and publish the due messages."""
         data = self.data
+        if self.steps % self.joint_state_every == 0:
+            self._publish_controller_state(_stamp(data.time))
         data.ctrl[:] = self.tracker.setpoint(data.time)
         mujoco.mj_step(self.model, data)
         self.steps += 1
@@ -237,6 +244,70 @@ class MujocoSimulator(Node):
         msg.velocity = data.qvel[self.dof_adr].tolist()
         msg.effort = data.qfrc_actuator[self.dof_adr].tolist()
         self.joint_state_pub.publish(msg)
+
+    def _publish_controller_state(self, stamp: Time) -> None:
+        """Publish the state and reference used for the next physics step.
+
+        Args:
+            stamp: Pre-step simulation timestamp.
+        """
+        msg = JointTrajectoryControllerState()
+        msg.header.stamp = stamp
+        msg.joint_names = self.joint_names
+        positions, velocities = self.tracker.sample(self.data.time)
+        msg.reference.positions = positions.tolist()
+        msg.reference.velocities = velocities.tolist()
+        msg.feedback.positions = self.data.qpos[self.qpos_adr].tolist()
+        msg.feedback.velocities = self.data.qvel[self.dof_adr].tolist()
+        msg.error.positions = (positions - self.data.qpos[self.qpos_adr]).tolist()
+        msg.error.velocities = (velocities - self.data.qvel[self.dof_adr]).tolist()
+        self.controller_state_pub.publish(msg)
+
+    def _validate_gains(self, parameters):
+        """Reject invalid gain batches without mutating the simulation.
+
+        Args:
+            parameters: Proposed ROS parameters.
+
+        Returns:
+            Validation result for the entire batch.
+        """
+        for parameter in parameters:
+            if parameter.name.startswith('gains.'):
+                if (parameter.type_ != rclpy.Parameter.Type.DOUBLE
+                        or not np.isfinite(parameter.value)):
+                    return SetParametersResult(
+                        successful=False, reason='Gains must be finite floating-point values')
+                if (parameter.name.endswith('.p') and parameter.value <= 0.0
+                        or parameter.name.endswith('.d') and parameter.value < 0.0):
+                    return SetParametersResult(
+                        successful=False, reason='Gains require P > 0 and D >= 0')
+        return SetParametersResult(successful=True)
+
+    def set_parameters_atomically(self, parameters):
+        """Commit effective gains only after every parameter callback accepts the batch.
+
+        Args:
+            parameters: Proposed ROS parameters.
+
+        Returns:
+            Atomic parameter update result.
+        """
+        if not hasattr(self, 'tracker'):
+            return super().set_parameters_atomically(parameters)
+        with self.lock:
+            result = super().set_parameters_atomically(parameters)
+            if result.successful and any(p.name.startswith('gains.') for p in parameters):
+                p_gains = np.array([
+                    self.get_parameter(f'gains.{name}.p').value for name in self.joint_names])
+                d_gains = np.array([
+                    self.get_parameter(f'gains.{name}.d').value for name in self.joint_names])
+                self.model.actuator_gainprm[:, 0] = p_gains
+                self.model.actuator_biasprm[:, 1] = -p_gains
+                self.model.actuator_biasprm[:, 2] = -d_gains
+                self.tracker.p_gains = p_gains
+                self.tracker.d_gains = d_gains
+            return result
 
     def _publish_odom(self, stamp: Time) -> None:
         """Publish the base pose and its world-frame twist.

@@ -1,0 +1,11 @@
+<library path="">
+  <class name="Humanoid PD tuning" type="humanoid_tuning.panel.TuningPanel"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>Prepare floating joint step experiments and tune backend PD gains.</description>
+    <qtgui>
+      <group><label>Robot Tools</label></group>
+      <label>Humanoid PD tuning</label>
+      <statustip>Single-joint PD step response experiments.</statustip>
+    </qtgui>
+  </class>
+</library>
