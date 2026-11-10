@@ -26,9 +26,9 @@
         <xacro:cylinder_inertia mass="${thigh_mass}" radius="${thigh_radius}" length="${thigh_length}"/>
       </inertial>
       <visual>
-        <origin xyz="0 0 ${-thigh_length/2}" rpy="0 0 0"/>
+        <origin xyz="-0.055 -0.055 ${-0.03}" rpy="0 0 0"/>
         <geometry>
-          <cylinder radius="${thigh_radius}" length="${thigh_length}"/>
+          <mesh filename="package://humanoid_description/urdf/meshes/thigh_viz.stl" scale="0.001 0.001 0.001"/>
         </geometry>
       </visual>
       <collision>
@@ -46,9 +46,9 @@
         <xacro:cylinder_inertia mass="${shank_mass}" radius="${shin_radius}" length="${shin_length}"/>
       </inertial>
       <visual>
-        <origin xyz="0 0 ${-shin_length/2}" rpy="0 0 0"/>
+        <origin xyz="0.05 -0.05 ${-shin_length+0.02}" rpy="0 0 ${pi/2}"/>
         <geometry>
-          <cylinder radius="${shin_radius}" length="${shin_length}"/>
+          <mesh filename="package://humanoid_description/urdf/meshes/shin_viz.stl" scale="0.001 0.001 0.001"/>
         </geometry>
       </visual>
       <collision>
@@ -74,9 +74,9 @@
         <xacro:box_inertia mass="${foot_mass}" x="${foot_x}" y="${foot_y}" z="${foot_z}"/>
       </inertial>
       <visual>
-        <origin xyz="0 0.05 ${-foot_z/2}" rpy="0 0 0"/>
+        <origin xyz="-0.1 -0.12 ${-foot_z}" rpy="0 0 0"/>
         <geometry>
-          <box size="${foot_x} ${foot_y} ${foot_z}"/>
+          <mesh filename="package://humanoid_description/urdf/meshes/foot_viz.stl" scale="0.001 0.001 0.001"/>
         </geometry>
       </visual>
       <collision>

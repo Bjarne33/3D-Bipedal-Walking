@@ -33,7 +33,7 @@ from std_srvs.srv import Empty
 from trajectory_msgs.msg import JointTrajectory
 
 from humanoid_mujoco.model import (
-    actuated_joints, BASE_BODY, build_model, FT_SENSORS, set_start_camera)
+    actuated_joints, BASE_BODY, build_model, COLLISION_GROUP, FT_SENSORS, set_start_camera)
 from humanoid_mujoco.trajectory import TrajectoryTracker
 
 # Wall-clock period of the optional viewer refresh [s].
@@ -179,6 +179,7 @@ class MujocoSimulator(Node):
             self.get_logger().warn(f'MuJoCo viewer unavailable, running headless: {exc}')
             return
         with self.viewer.lock():
+            self.viewer.opt.geomgroup[COLLISION_GROUP] = 0
             set_start_camera(self.model, self.data, self.viewer.cam,
                              float(self.get_parameter('viewer_distance').value))
 

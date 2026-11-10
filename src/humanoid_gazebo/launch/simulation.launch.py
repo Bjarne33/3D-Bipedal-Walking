@@ -1,6 +1,7 @@
 """Start Gazebo Classic, publish the model and spawn the robot and controllers."""
 
 from launch import LaunchDescription
+from launch.actions import AppendEnvironmentVariable
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -75,6 +76,10 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('floating', default_value='false',
                               description='Pin the robot base in the air (true/false)'),
+        AppendEnvironmentVariable(
+            'GAZEBO_MODEL_PATH',
+            PathJoinSubstitution([FindPackageShare('humanoid_description'), '..']),
+        ),
         gazebo,
         robot_state_publisher,
         spawn_entity,

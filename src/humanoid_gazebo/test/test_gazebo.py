@@ -1,15 +1,19 @@
 """Verify the Gazebo backend model, launch sequence and Python style."""
 
 import importlib.util
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from ament_flake8.main import main_with_errors
 from ament_pep257.main import main
 from launch import LaunchContext
+from launch.actions import AppendEnvironmentVariable, ExecuteProcess, IncludeLaunchDescription
 from launch.actions import RegisterEventHandler
 from launch.events.process import ProcessExited
+from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 import pytest
 import xacro
 
@@ -79,6 +83,64 @@ def test_controller_sequence():
     assert handlers[1].matches(broadcaster_exit)
     controller = handlers[1].handle(broadcaster_exit, context)[0]
     assert broadcaster.node_executable == controller.node_executable == 'spawner'
+
+
+@pytest.mark.parametrize('existing_path', [None, '', '/custom/models:/other/models'])
+def test_mesh_search_path(monkeypatch, existing_path):
+    """Check both Gazebo processes can find installed meshes while retaining user paths."""
+    if existing_path is None:
+        monkeypatch.delenv('GAZEBO_MODEL_PATH', raising=False)
+    else:
+        monkeypatch.setenv('GAZEBO_MODEL_PATH', existing_path)
+    spec = importlib.util.spec_from_file_location(
+        'gazebo_simulation', ROOT / 'launch' / 'simulation.launch.py',
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    context = LaunchContext()
+    for action in description.entities:
+        if isinstance(action, IncludeLaunchDescription):
+            break
+        if isinstance(action, AppendEnvironmentVariable):
+            action.execute(context)
+
+    share = Path(FindPackageShare('humanoid_description').perform(context))
+    paths = os.environ.get('GAZEBO_MODEL_PATH', '').split(os.pathsep)
+    assert share.parent in [Path(path).resolve() for path in paths if path]
+    if existing_path:
+        assert paths[:2] == existing_path.split(os.pathsep)
+
+    model = ET.fromstring(xacro.process_file(
+        str(ROOT / 'urdf' / 'humanoid.xacro'),
+    ).toxml())
+    meshes = model.findall('.//visual/geometry/mesh')
+    assert meshes
+    gazebo_share = Path(FindPackageShare('gazebo_ros').perform(context))
+    for filename in ('gzserver.launch.py', 'gzclient.launch.py'):
+        spec = importlib.util.spec_from_file_location(
+            'gazebo_process', gazebo_share / 'launch' / filename,
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        processes = [
+            entity for entity in module.generate_launch_description().entities
+            if isinstance(entity, ExecuteProcess)
+        ]
+        assert processes
+        for process in processes:
+            environment = {
+                perform_substitutions(context, key): perform_substitutions(context, value)
+                for key, value in process.additional_env
+            }
+            roots = environment['GAZEBO_MODEL_PATH'].split(os.pathsep)
+            for mesh in meshes:
+                uri = mesh.attrib['filename']
+                assert uri.startswith('package://')
+                relative_path = uri.removeprefix('package://')
+                assert any(
+                    (Path(root) / relative_path).is_file() for root in roots if root
+                ), uri
 
 
 @pytest.mark.linter

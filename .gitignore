@@ -1,6 +1,7 @@
 /log
 /install
 /build
+/latex
 /.github/copilot-instructions.md
 /.vscode
 __pycache__/

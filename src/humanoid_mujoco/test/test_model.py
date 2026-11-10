@@ -3,6 +3,7 @@
 import importlib.util
 import math
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 import mujoco
@@ -13,6 +14,7 @@ import yaml
 
 from humanoid_mujoco.model import actuated_joints, build_model, build_scene_xml, FT_SENSORS
 from humanoid_mujoco.model import ARMATURE, FREE_JOINT_NAME, set_start_camera
+from humanoid_mujoco.model import COLLISION_GROUP, urdf_to_mjcf
 from humanoid_mujoco.trajectory import TrajectoryTracker
 
 WORLD = str(Path(__file__).resolve().parents[1] / 'worlds' / 'world.xml')
@@ -100,7 +102,11 @@ def test_geoms_and_sensors(free_model):
     model = free_model
     names = [model.geom(i).name for i in range(model.ngeom)]
     assert all(names) and len(set(names)) == len(names)
-    robot = [i for i in range(model.ngeom) if model.geom_bodyid[i] != 0]
+    robot = [i for i in range(model.ngeom)
+             if model.geom_bodyid[i] != 0 and model.geom_group[i] != 1]
+    visuals = [i for i in range(model.ngeom) if model.geom_group[i] == 1]
+    for i in visuals:
+        assert model.geom_contype[i] == model.geom_conaffinity[i] == 0
     floor = model.geom('ground_plane').id
     for i in robot:
         assert not (model.geom_contype[i] & model.geom_conaffinity[robot[0]])
@@ -111,6 +117,82 @@ def test_geoms_and_sensors(free_model):
         assert np.allclose(site.pos, 0.0)
         assert model.sensor(f'{name}_force').type[0] == mujoco.mjtSensor.mjSENS_FORCE
         assert model.sensor(f'{name}_torque').type[0] == mujoco.mjtSensor.mjSENS_TORQUE
+
+
+@pytest.mark.parametrize('package_uri', [True, False])
+def test_mesh_visuals_preserve_physics_and_visibility(tmp_path, monkeypatch, package_uri):
+    """Resolve mesh assets, retain scale and pose, and keep visuals out of physics."""
+    mesh = tmp_path / 'tetra.obj'
+    mesh.write_text(
+        'v 0 0 0\nv 100 0 0\nv 0 200 0\nv 0 0 300\n'
+        'f 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n')
+    monkeypatch.setattr(
+        'humanoid_mujoco.model.get_package_share_directory', lambda package: str(tmp_path))
+    robot = ET.fromstring(_urdf(False))
+    for link in robot.findall('link'):
+        for visual in link.findall('visual'):
+            link.remove(visual)
+    collision_only = ET.tostring(robot, encoding='unicode')
+    visual = ET.SubElement(robot.find("link[@name='left_thigh_link']"), 'visual')
+    ET.SubElement(visual, 'origin', xyz='0.01 0.02 -0.2', rpy='0 0 1.5707963267948966')
+    geometry = ET.SubElement(visual, 'geometry')
+    filename = 'package://test_meshes/tetra.obj' if package_uri else str(mesh)
+    ET.SubElement(geometry, 'mesh', filename=filename, scale='0.001 0.001 0.001')
+    urdf = ET.tostring(robot, encoding='unicode')
+
+    scene = build_scene_xml(urdf, WORLD, GAINS)
+    asset = ET.fromstring(scene).find('asset/mesh')
+    assert Path(asset.get('file')) == mesh
+    assert np.fromstring(asset.get('scale'), sep=' ') == pytest.approx([0.001] * 3)
+    model = mujoco.MjModel.from_xml_string(scene)
+    baseline = build_model(collision_only, WORLD, GAINS)
+    assert model.nmesh == 1
+    assert model.ngeom == baseline.ngeom + 1
+    for field in ('body_mass', 'body_inertia', 'body_ipos', 'body_iquat', 'dof_armature'):
+        np.testing.assert_allclose(getattr(model, field), getattr(baseline, field))
+    geom = model.geom('left_thigh_link_visual')
+    collision = model.geom('left_thigh_link_collision')
+    assert geom.type[0] == mujoco.mjtGeom.mjGEOM_MESH
+    assert geom.group[0] == 1
+    assert geom.contype[0] == geom.conaffinity[0] == 0
+    assert collision.group[0] == COLLISION_GROUP
+    assert model.geom('right_thigh_link_collision').group[0] == 0
+    # Mesh compilation recentres/rotates vertices; undo that transform to check URDF pose.
+    mesh_id = geom.dataid[0]
+    rotation = np.empty(9)
+    mujoco.mju_quat2Mat(rotation, geom.quat)
+    mesh_rotation = np.empty(9)
+    mujoco.mju_quat2Mat(mesh_rotation, model.mesh_quat[mesh_id])
+    urdf_rotation = rotation.reshape(3, 3) @ mesh_rotation.reshape(3, 3).T
+    np.testing.assert_allclose(
+        urdf_rotation, [[0, -1, 0], [1, 0, 0], [0, 0, 1]], atol=1e-6)
+    np.testing.assert_allclose(
+        geom.pos - urdf_rotation @ model.mesh_pos[mesh_id], [0.01, 0.02, -0.2], atol=1e-6)
+
+    data, baseline_data = mujoco.MjData(model), mujoco.MjData(baseline)
+    for _ in range(100):
+        mujoco.mj_step(model, data)
+        mujoco.mj_step(baseline, baseline_data)
+    np.testing.assert_allclose(data.qpos, baseline_data.qpos, atol=1e-10)
+    np.testing.assert_allclose(data.qvel, baseline_data.qvel, atol=1e-10)
+    options = mujoco.MjvOption()
+    options.geomgroup[COLLISION_GROUP] = 0
+    rendered = mujoco.MjvScene(model, maxgeom=100)
+    mujoco.mjv_updateScene(model, data, options, None, mujoco.MjvCamera(),
+                           mujoco.mjtCatBit.mjCAT_ALL, rendered)
+    visible = {rendered.geoms[i].objid for i in range(rendered.ngeom)
+               if rendered.geoms[i].objtype == mujoco.mjtObj.mjOBJ_GEOM}
+    assert geom.id in visible and collision.id not in visible
+    assert model.geom('ground_plane').id in visible
+    assert model.geom('right_thigh_link_collision').id in visible
+
+    # The RL exporter must still receive collision-only geometry without resolving visuals.
+    mesh.unlink()
+    converted = urdf_to_mjcf(urdf)
+    assert converted.find('asset/mesh') is None
+    assert converted.find(".//geom[@name='left_thigh_link_visual']") is None
+    with pytest.raises(ValueError, match='tetra.obj'):
+        build_model(urdf, WORLD, GAINS)
 
 
 def test_start_camera_centres_robot(free_model):

@@ -15,6 +15,7 @@ import tempfile
 from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
+from ament_index_python.packages import get_package_share_directory
 import mujoco
 
 # Name of the free joint added to the base when the robot is not pinned.
@@ -30,6 +31,8 @@ FT_SENSORS: Dict[str, str] = {
 # default self_collide=false; world geoms keep the MuJoCo defaults (1/1).
 ROBOT_CONTYPE = '2'
 ROBOT_CONAFFINITY = '1'
+# Hide these collision geoms in the viewer when the body has separate visual geometry.
+COLLISION_GROUP = 3
 # Reflected rotor inertia of every actuated joint [kg m^2], equal to `ARMATURE` in
 # `rl/humanoid_rl/constants.py` so that RL policies see the dynamics they were trained on.
 ARMATURE = 0.02
@@ -60,21 +63,37 @@ def actuated_joints(urdf: str) -> List[str]:
             if joint.get('type') in ('revolute', 'continuous')]
 
 
-def urdf_to_mjcf(urdf: str) -> ET.Element:
+def urdf_to_mjcf(urdf: str, *, discard_visual: bool = True) -> ET.Element:
     """Convert a URDF to MJCF with MuJoCo's URDF importer.
 
-    Visual geometry is discarded (the collision geometry is identical) and static bodies are
-    kept so `base` and the links remain addressable by name.
+    Static bodies are kept so `base` and the links remain addressable by name.
+    Collision-only conversion remains the default for the RL model exporter.
 
     Args:
         urdf: Expanded URDF of the shared description.
+        discard_visual: Discard visual geometry instead of importing it alongside collisions.
 
     Returns:
         Root `<mujoco>` element of the converted model.
     """
     robot = ET.fromstring(urdf)
+    for link in robot.findall('link'):
+        for kind in ('visual', 'collision'):
+            elements = link.findall(kind)
+            for index, element in enumerate(elements):
+                suffix = '' if len(elements) == 1 else f'_{index}'
+                element.set('name', f"{link.get('name')}_{kind}{suffix}")
+                if kind == 'visual' and discard_visual:
+                    continue
+                for mesh in element.findall('geometry/mesh'):
+                    filename = mesh.get('filename', '')
+                    if filename.startswith('package://'):
+                        package, relative_path = filename[len('package://'):].split('/', 1)
+                        mesh.set('filename', os.path.join(
+                            get_package_share_directory(package), relative_path))
     extension = ET.SubElement(robot, 'mujoco')
-    ET.SubElement(extension, 'compiler', discardvisual='true', fusestatic='false')
+    ET.SubElement(extension, 'compiler', discardvisual=str(discard_visual).lower(),
+                  fusestatic='false', strippath='false')
     model = mujoco.MjModel.from_xml_string(ET.tostring(robot, encoding='unicode'))
     fd, path = tempfile.mkstemp(suffix='.xml')
     os.close(fd)
@@ -107,11 +126,14 @@ def _add_robot_elements(robot: ET.Element, floating: bool, spawn_z: float,
 
     for body in robot.iter('body'):
         geoms = body.findall('geom')
-        for index, geom in enumerate(geoms):
-            suffix = '' if len(geoms) == 1 else f'_{index}'
-            geom.set('name', f"{body.get('name')}_collision{suffix}")
+        has_visual = any(geom.get('group') == '1' for geom in geoms)
+        for geom in geoms:
+            if geom.get('group') == '1':
+                continue
             geom.set('contype', ROBOT_CONTYPE)
             geom.set('conaffinity', ROBOT_CONAFFINITY)
+            if has_visual:
+                geom.set('group', str(COLLISION_GROUP))
 
     sensors = ET.SubElement(robot, 'sensor')
     for name, body_name in FT_SENSORS.items():
@@ -177,7 +199,7 @@ def build_scene_xml(urdf: str, world_path: str, gains: Dict[str, Tuple[float, fl
     floating = is_floating(urdf)
     if spawn_z is None:
         spawn_z = 0.15 if floating else 0.0
-    robot = urdf_to_mjcf(urdf)
+    robot = urdf_to_mjcf(urdf, discard_visual=False)
     _add_robot_elements(robot, floating, spawn_z, gains)
     world = ET.parse(world_path).getroot()
     _merge(world, robot)

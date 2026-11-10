@@ -15,6 +15,9 @@ It includes:
 - A learning-based walking controller (`rl/`, ROS-free) trained with curriculum reinforcement
   learning (Brax PPO on MuJoCo MJX); see [rl/README.md](rl/README.md).
 
+Detailed system documentation is available as a [LaTeX project](latex/README.md), including a
+VS Code LaTeX Workshop workspace and build recipe.
+
 ## Requirements
 
 - Ubuntu 22.04
@@ -346,6 +349,9 @@ Gazebo Classic integration; depends on the shared description, not on control or
 
 - `launch/simulation.launch.py`: Starts Gazebo, publishes the backend model, spawns the robot,
   then loads the joint-state broadcaster and trajectory controller in the existing order.
+  Adds the parent of the installed `humanoid_description` share directory to
+  `GAZEBO_MODEL_PATH` for both server and client, preserving existing paths so Gazebo can
+  resolve the shared model's `package://humanoid_description/...` mesh visuals.
 - `urdf/humanoid.xacro`: Includes the shared robot description and adds the unchanged Gazebo
   contact settings, ground-truth and ankle force/torque plugins.
 - `urdf/ros2_control.xacro` and `urdf/transmissions/`: Gazebo hardware integration.
@@ -365,6 +371,11 @@ MuJoCo integration; depends on the shared description, not on control or bringup
   limits, damping, friction and effort limits are taken from it) and adds a free base joint (or
   welds `base` to the world with `floating:=true`), collision filtering, ankle force/torque
   sensors and one position actuator per joint. The robot is merged into the MJCF world.
+  URDF visuals (including meshes with `package://` paths) are retained with their origins and
+  scales, but never participate in collisions. The original collision shapes and inertias
+  remain responsible for physics. MuJoCo supports binary STL, OBJ and MSH meshes; binary STL
+  files must have at most 200,000 triangles (re-export more detailed CAD meshes at a lower
+  resolution or use OBJ). Rebuild `humanoid_description` after adding mesh assets.
 - `humanoid_mujoco/trajectory.py`: Joint-trajectory tracker emulating the
   `joint_trajectory_controller` (hold on activation, start from the current desired state, linear
   or cubic interpolation, hold the last point). Accelerations are ignored.
@@ -383,6 +394,9 @@ MuJoCo integration; depends on the shared description, not on control or bringup
 	- An optional passive viewer. Its start camera looks at the robot's centre of mass from
 	  `viewer_distance` (default 3 m), with the azimuth and elevation of `<visual><global>` in
 	  the world file; "Align" in the viewer switches to MuJoCo's whole-scene view.
+	  Visuals are shown by default; separate robot collision shapes are in geom group 3,
+	  hidden by default and toggleable in the viewer. Links without visuals retain visible
+	  collision shapes. The ground remains visible in group 0.
 - `launch/simulation.launch.py`: Starts `robot_state_publisher` and `mujoco_sim`. Arguments:
   `pause`, `world`, `use_sim_time`, `floating` and `gui` (viewer, default `true`; not forwarded
   by bringup). It sets `PYGLFW_LIBRARY_VARIANT=x11` for `mujoco_sim` unless the variable is
