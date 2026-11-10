@@ -6,7 +6,9 @@ from enum import Enum
 import rclpy
 from controller_manager_msgs.srv import ListControllers
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -69,6 +71,14 @@ class HumanoidStartupManager(Node):
             10
         )
 
+        # Latched so that nodes started later still learn that startup has finished.
+        self.ready_pub = self.create_publisher(
+            Bool,
+            '/humanoid_startup/ready',
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        )
+        self.ready_pub.publish(Bool(data=False))
+
         # ---------------- Subscriber ----------------
         self.create_subscription(
             JointState,
@@ -116,6 +126,7 @@ class HumanoidStartupManager(Node):
             if self.pose_reached():
                 self.get_logger().info("Initial pose reached")
                 self.state = StartupState.READY
+                self.ready_pub.publish(Bool(data=True))
                 self.timer.cancel()
 
     # ============================================================

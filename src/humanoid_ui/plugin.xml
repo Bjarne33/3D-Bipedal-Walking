@@ -1,0 +1,11 @@
+<library path="">
+  <class name="Humanoid walk manager" type="humanoid_ui.walk_manager_panel.WalkManagerPanel"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>Start and stop model-based and RL walking through the walk manager.</description>
+    <qtgui>
+      <group><label>Robot Tools</label></group>
+      <label>Humanoid walk manager</label>
+      <statustip>Walk, RL walk and stop buttons for the simulated humanoid.</statustip>
+    </qtgui>
+  </class>
+</library>

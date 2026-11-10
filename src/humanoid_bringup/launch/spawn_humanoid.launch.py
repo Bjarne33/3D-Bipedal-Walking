@@ -25,6 +25,7 @@ def generate_launch_description():
     floating = LaunchConfiguration('floating')
     visualization = LaunchConfiguration('visualization')
     simulator = LaunchConfiguration('simulator')
+    ui = LaunchConfiguration('ui')
 
     simulator_arg = DeclareLaunchArgument(
         'simulator',
@@ -37,6 +38,12 @@ def generate_launch_description():
         'visualization',
         default_value='false',
         description='Launch RViz and the CoM visualizer',
+    )
+
+    ui_arg = DeclareLaunchArgument(
+        'ui',
+        default_value='true',
+        description='Open the walk manager rqt panel (Stop / Walk / RL Walk)',
     )
 
     floating_arg = DeclareLaunchArgument(
@@ -95,6 +102,11 @@ def generate_launch_description():
         executable='humanoid_startup',
         name='humanoid_startup',
         output='screen',
+        parameters=[{
+            # MuJoCo's soft RL-training PD gains leave ~0.07 rad ankle error under load.
+            'pose_tolerance': PythonExpression(
+                ["0.1 if '", simulator, "' == 'mujoco' else 0.02"]),
+        }],
     )
 
     humanoid_estimator = Node(
@@ -135,6 +147,43 @@ def generate_launch_description():
         }],
     )
 
+    control_config = PathJoinSubstitution([FindPackageShare('humanoid_control'), 'config'])
+
+    humanoid_walk = Node(
+        package='humanoid_control',
+        executable='humanoid_walk',
+        name='humanoid_walk',
+        output='screen',
+        parameters=[PathJoinSubstitution([control_config, 'gait.yaml']),
+                    {'use_sim_time': use_sim_time}],
+    )
+
+    humanoid_rl_walk = Node(
+        package='humanoid_control',
+        executable='humanoid_rl_walk',
+        name='humanoid_rl_walk',
+        output='screen',
+        parameters=[PathJoinSubstitution([control_config, 'rl_walk.yaml']),
+                    {'use_sim_time': use_sim_time}],
+    )
+
+    humanoid_walk_manager = Node(
+        package='humanoid_control',
+        executable='humanoid_walk_manager',
+        name='humanoid_walk_manager',
+        output='screen',
+        parameters=[PathJoinSubstitution([control_config, 'walk_manager.yaml']),
+                    {'use_sim_time': use_sim_time}],
+    )
+
+    walk_manager_panel = Node(
+        package='humanoid_ui',
+        executable='walk_manager_panel',
+        condition=IfCondition(ui),
+        name='walk_manager_panel',
+        output='screen',
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -152,6 +201,7 @@ def generate_launch_description():
         use_sim_time_arg,
         floating_arg,
         visualization_arg,
+        ui_arg,
         gazebo,
         mujoco,
         rviz,
@@ -159,4 +209,8 @@ def generate_launch_description():
         humanoid_estimator,
         com_visualizer,
         humanoid_predefined_trajs,
+        humanoid_walk,
+        humanoid_rl_walk,
+        humanoid_walk_manager,
+        walk_manager_panel,
     ])

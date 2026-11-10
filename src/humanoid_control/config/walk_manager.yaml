@@ -1,0 +1,18 @@
+humanoid_walk_manager:
+  ros__parameters:
+    # State machine loop rate [Hz] and maximum period between state publications [s].
+    update_rate: 20.0
+    publish_period_sec: 1.0
+    # A RobotState older than this counts as missing (walking is then not offered).
+    state_timeout_sec: 0.5
+    # The robot is at rest when the CoM speed stays below rest_speed [m/s] for rest_hold_sec.
+    rest_speed: 0.02
+    rest_hold_sec: 1.0
+    # Fall detection: base tilt [rad] or CoM height below this fraction of the standing height.
+    fall_tilt: 0.8
+    fall_height_ratio: 0.6
+    # Goal of the Walk button: 0 walks continuously until Stop.
+    walk_num_steps: 0
+    # Goal of the RL Walk button: speed [m/s] and duration [s] (0 = until Stop).
+    rl_forward_speed: 0.15
+    rl_duration: 0.0

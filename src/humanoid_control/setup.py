@@ -13,7 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config',
-            ['config/gait.yaml', 'config/estimator.yaml', 'config/rl_walk.yaml']),
+            ['config/gait.yaml', 'config/estimator.yaml', 'config/rl_walk.yaml',
+             'config/walk_manager.yaml']),
         ('share/' + package_name + '/launch',
             ['launch/walk.launch.py', 'launch/rl_walk.launch.py']),
         ('share/' + package_name + '/policies', ['policies/policy.npz']),
@@ -33,6 +34,7 @@ setup(
             'humanoid_walk = humanoid_control.nodes.humanoid_walk:main',
             'humanoid_rl_walk = humanoid_control.nodes.humanoid_rl_walk:main',
             'humanoid_estimator = humanoid_control.nodes.humanoid_estimator:main',
+            'humanoid_walk_manager = humanoid_control.nodes.humanoid_walk_manager:main',
         ],
     },
 )

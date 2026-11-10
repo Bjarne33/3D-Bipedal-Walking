@@ -28,12 +28,12 @@ def test_launch_description():
         if isinstance(entity, DeclareLaunchArgument)
     }
     assert set(arguments) == {
-        'simulator', 'floating', 'pause', 'world', 'use_sim_time', 'visualization',
+        'simulator', 'floating', 'pause', 'world', 'use_sim_time', 'visualization', 'ui',
     }
     context = LaunchContext()
     defaults = {
         'simulator': 'gazebo', 'floating': 'false', 'pause': 'true', 'use_sim_time': 'true',
-        'visualization': 'false',
+        'visualization': 'false', 'ui': 'true',
     }
     for name, value in defaults.items():
         assert perform_substitutions(context, arguments[name].default_value) == value
@@ -49,8 +49,14 @@ def test_launch_description():
         for executable in ('rviz2', 'com_visualizer'):
             assert nodes[executable].condition.evaluate(context) == (value == 'true')
         for executable, node in nodes.items():
-            if executable not in ('rviz2', 'com_visualizer'):
+            if executable not in ('rviz2', 'com_visualizer', 'walk_manager_panel'):
                 assert node.condition is None
+    for value in (None, 'false', 'true'):
+        context = LaunchContext()
+        if value is not None:
+            context.launch_configurations['ui'] = value
+        arguments['ui'].execute(context)
+        assert nodes['walk_manager_panel'].condition.evaluate(context) == (value != 'false')
     backends = [
         entity for entity in description.entities if isinstance(entity, IncludeLaunchDescription)
     ]
@@ -113,5 +119,9 @@ def test_launch_dependencies():
         ('humanoid_control', 'humanoid_estimator'),
         ('humanoid_control', 'com_visualizer'),
         ('humanoid_control', 'humanoid_predefined_trajs'),
+        ('humanoid_control', 'humanoid_walk'),
+        ('humanoid_control', 'humanoid_rl_walk'),
+        ('humanoid_control', 'humanoid_walk_manager'),
+        ('humanoid_ui', 'walk_manager_panel'),
         ('rviz2', 'rviz2'),
     ])

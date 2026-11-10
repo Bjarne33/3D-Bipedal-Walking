@@ -11,6 +11,7 @@ find_package(builtin_interfaces REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BalanceState.msg"
   "msg/RobotState.msg"
+  "msg/WalkManagerState.msg"
   "msg/JointTuningState.msg"
   "action/RlWalk.action"
   "action/Walk.action"

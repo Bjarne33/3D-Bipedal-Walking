@@ -142,7 +142,35 @@ ros2 launch humanoid_bringup spawn_humanoid.launch.py simulator:=mujoco
 ros2 launch humanoid_bringup spawn_humanoid.launch.py visualization:=true
 # Optional: pin the base in the air so the robot cannot fall (useful for inspecting motions)
 ros2 launch humanoid_bringup spawn_humanoid.launch.py floating:=true
+# Optional: do not open the walk manager panel (headless runs)
+ros2 launch humanoid_bringup spawn_humanoid.launch.py ui:=false
 ```
+
+Bringup also starts both walking nodes (`humanoid_walk`, `humanoid_rl_walk`), the
+`humanoid_walk_manager` state machine and its rqt panel (**Humanoid walk manager**, also
+available in rqt under *Plugins > Robot Tools*). The panel has three buttons:
+
+- **Walk**: model-based walking (`humanoid_walk`, `num_steps: 0`, until Stop).
+- **RL Walk**: RL policy walking (`humanoid_rl_walk`, 0.15 m/s, until Stop).
+- **Stop**: cancels the running walk (model-based: closes the feet at the next step boundary;
+  RL: commands the standing pose at once).
+
+Buttons that cannot be used in the current state are grayed out. The manager states are
+`STARTUP` (waiting for `humanoid_startup`), `SETTLING` (waiting until the CoM is at rest),
+`IDLE` (Walk/RL Walk enabled when the respective action server is available), `WALKING` /
+`RL_WALKING` (Stop enabled), `STOPPING` and `FALLEN` (base tilt or CoM drop detected; walking
+stays disabled until the robot is upright again). Without the panel, use the services:
+
+```bash
+ros2 service call /humanoid_walk_manager/walk std_srvs/srv/Trigger {}
+ros2 service call /humanoid_walk_manager/rl_walk std_srvs/srv/Trigger {}
+ros2 service call /humanoid_walk_manager/stop std_srvs/srv/Trigger {}
+ros2 topic echo /humanoid_walk_manager/state   # humanoid_interfaces/msg/WalkManagerState
+```
+
+The panel needs `rqt_gui` and `rqt_gui_py` (installed by rosdep, or
+`sudo apt install ros-humble-rqt-gui ros-humble-rqt-gui-py`). The RL policy was trained for the
+MuJoCo backend only; RL Walk is offered with Gazebo too but is untested there.
 
 Run URDF/RViz-only visualization (without Gazebo):
 
@@ -157,21 +185,21 @@ ros2 service call /humanoid_predefined_trajs/step_once std_srvs/srv/Trigger {}
 ros2 service call /humanoid_predefined_trajs/step_n humanoid_interfaces/srv/StepN "{num_steps: 4}"   # n steps, alternating right/left
 ```
 
-Start the model-based gait node (with the simulation already running) and send a walk goal.
+The walking action servers can also be used directly; bringup already starts both nodes, so do
+not launch `walk.launch.py` or `rl_walk.launch.py` in addition (they are for custom
+compositions without bringup). Do not send goals directly while the walk manager runs a walk.
 Wait until the robot has settled in the standing pose after startup (see Known issues):
 
 ```bash
-ros2 launch humanoid_control walk.launch.py
 ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"
 ```
 
 To deploy the trained RL policy instead, start the MuJoCo simulation, wait until the robot is at
-rest, then start the RL walking node and send a goal (`forward_speed` in m/s, `duration` in s,
-`duration: 0.0` walks until canceled):
+rest and send a goal (`forward_speed` in m/s, `duration` in s, `duration: 0.0` walks until
+canceled):
 
 ```bash
 ros2 launch humanoid_bringup spawn_humanoid.launch.py simulator:=mujoco
-ros2 launch humanoid_control rl_walk.launch.py
 ros2 action send_goal /humanoid_rl_walk/rl_walk humanoid_interfaces/action/RlWalk "{forward_speed: 0.15, duration: 10.0}"
 ```
 
@@ -285,23 +313,28 @@ src/
   humanoid_gazebo/        Gazebo Classic model extensions, physics, controllers and launch
   humanoid_mujoco/        MuJoCo scene builder, ROS bridge node emulating the Gazebo interface, launch
   humanoid_description/   Simulator-independent Xacro model, RViz config and preview
-  humanoid_interfaces/    Actions, services, RobotState, BalanceState and JointTuningState messages
+  humanoid_interfaces/    Actions, services, RobotState, BalanceState, WalkManagerState and
+                          JointTuningState messages
+  humanoid_ui/            rqt walk manager panel (Stop / Walk / RL Walk)
   humanoid_tuning/        Floating PD experiments, rqt panel, native YAML export and PJ4 layouts
   humanoid_control/
     config/gait.yaml      Parameters of humanoid_walk
     config/estimator.yaml Sensor inputs, geometry and rate of humanoid_estimator
     config/rl_walk.yaml   Parameters of humanoid_rl_walk
+    config/walk_manager.yaml Goals and rest/fall thresholds of humanoid_walk_manager
     launch/walk.launch.py Starts humanoid_walk with gait.yaml
     launch/rl_walk.launch.py Starts humanoid_rl_walk with rl_walk.yaml
     policies/policy.npz   Trained RL policy exported from rl/ (default of humanoid_rl_walk)
     humanoid_control/
       nodes/              humanoid_startup, humanoid_predefined_trajs, humanoid_walk,
-                          humanoid_rl_walk, humanoid_estimator, com_visualizer
+                          humanoid_rl_walk, humanoid_estimator, com_visualizer,
+                          humanoid_walk_manager
       tools/              ROS-independent modules used by the nodes:
                             joints.py (joint order, standing pose), humanoid_kinematics.py (Pinocchio/Pink IK),
                             gait modules (footstep planner, LIPM/DCM, swing trajectory, walking pattern,
                             plan, balance, state estimator, support polygon, gait_params),
-                            rl_policy.py (NumPy RL policy and observation)
+                            rl_policy.py (NumPy RL policy and observation),
+                            walk_manager.py (walk manager state machine)
     test/                 Unit tests and style checks
 rl/                       Learning-based walking controller (not a colcon package, COLCON_IGNORE):
   humanoid_rl/            MJX environment, curriculum rewards, PPO curriculum driver, export
@@ -338,10 +371,15 @@ existing control and visualization nodes.
 	- Starts control nodes from `humanoid_control`.
 	- Starts RViz and `com_visualizer` only when `visualization:=true` (default: `false`).
 	- Starts one `humanoid_estimator`, shared by walking and visualization.
+	- Starts `humanoid_walk` (`gait.yaml`), `humanoid_rl_walk` (`rl_walk.yaml`) and
+	  `humanoid_walk_manager` (`walk_manager.yaml`) with both backends.
+	- Starts the `humanoid_ui` walk manager panel unless `ui:=false` (default: `true`).
+	- Sets `humanoid_startup`'s `pose_tolerance` to 0.1 rad with MuJoCo (0.02 rad with Gazebo):
+	  the soft MuJoCo PD gains leave about 0.07 rad ankle error under load, so the standing pose
+	  was otherwise never reported as reached.
 
 The simulation launch has moved from `humanoid_description` to `humanoid_bringup`;
-its startup sequence is preserved, with visualization now opt-in. The model-based walking node
-is still started separately using `ros2 launch humanoid_control walk.launch.py`.
+its startup sequence is preserved, with visualization now opt-in.
 
 ### `humanoid_gazebo`
 
@@ -433,6 +471,7 @@ Control and visualization nodes for startup and walking behavior.
 	- Waits for controllers to become active.
 	- Sends an initial standing pose to the trajectory controller.
 	- Handles pause/unpause sequencing for startup.
+	- Publishes the latched `/humanoid_startup/ready` (`std_msgs/Bool`), `true` once the standing pose is reached.
 - `humanoid_predefined_trajs` (joint-space test motions):
 	- Provides service `/humanoid_predefined_trajs/step_once`.
 	- Executes a single test step sequence with phases (shift, swing, place, settle).
@@ -461,7 +500,7 @@ Control and visualization nodes for startup and walking behavior.
 	- Action `/humanoid_walk/walk` (`humanoid_interfaces/action/Walk`): `num_steps > 0` walks that many steps plus a closing step, `num_steps = 0` walks until canceled. Cancel or `/humanoid_walk/stop` closes the feet at the next step boundary.
 	- Parameters in `humanoid_control/config/gait.yaml` (step length/time, swing height, DSP ratio, balance gains/limits, ...). Step width and CoM height are derived from the standing pose by default.
 	- Before the first step the CoM is moved quasi-statically above the first stance foot (`shift_time`, quintic at rest) and held (`hold_time`); `shift_time: 0` disables this. Phases are reported as `shift`, `hold`, `init`, `step`, `final`.
-	- Run: `ros2 launch humanoid_control walk.launch.py`, then e.g. `ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"`.
+	- Started by simulation bringup; for custom compositions without bringup: `ros2 launch humanoid_control walk.launch.py`. Then e.g. `ros2 action send_goal /humanoid_walk/walk humanoid_interfaces/action/Walk "{num_steps: 4}"`.
 	- Unit tests: `python3 -m pytest src/humanoid_control/test`.
 	- Parameters (`gait.yaml`) override the `GaitParams` defaults; `step_width` and `com_height` <= 0 are derived from the standing pose.
 - `humanoid_rl_walk` (RL policy deployment, `tools/rl_policy.py`; MuJoCo backend):
@@ -469,8 +508,15 @@ Control and visualization nodes for startup and walking behavior.
 	- Runs one policy step per `/humanoid_estimator/state` message (50 Hz = the policy's `ctrl_dt`). The observation mirrors the training environment: base-frame gyro and projected gravity (from the world-frame base pose and angular velocity), forward speed command, joint positions relative to the standing pose, joint velocities, last action and the gait clock (starting at phase 0 for every goal).
 	- Publishes `standing pose + action_scale * action`, clipped to the URDF limits, as a single-point trajectory with `time_from_start = target_time_from_start` (default 0: applied at once, like training).
 	- Action `/humanoid_rl_walk/rl_walk` (`humanoid_interfaces/action/RlWalk`): `forward_speed` (clamped to the trained range [0.05, 0.2] m/s with a warning) and `duration` (0 = until canceled). Feedback reports elapsed time, commanded and measured (CoM) forward speed and the gait phase. Cancel, the end of `duration` or `/humanoid_rl_walk/stop` command the standing pose at once.
-	- Parameters in `config/rl_walk.yaml`; run with `ros2 launch humanoid_control rl_walk.launch.py` (optional `policy_path:=...`).
+	- Parameters in `config/rl_walk.yaml`; started by simulation bringup, or for custom compositions with `ros2 launch humanoid_control rl_walk.launch.py` (optional `policy_path:=...`).
 	- Headless MuJoCo trials (0.1-0.2 m/s, 8-10 s, plus cancel and stop): the robot walked forward without falling during the walk at about 0.6-0.8 of the commanded speed, with lateral and heading drift (the policy has no heading feedback; about 5-15 deg yaw per run). The abrupt switch to the standing pose causes 11-13 deg tilt transients; one of eight runs ended with the robot fallen (unmonitored, most likely at the switch).
+- `humanoid_walk_manager` (walk manager state machine, `tools/walk_manager.py`):
+	- States `STARTUP` -> `SETTLING` -> `IDLE` -> `WALKING` / `RL_WALKING` -> `STOPPING` -> `SETTLING`, plus `FALLEN`. Leaves `STARTUP` on `/humanoid_startup/ready`; enters `IDLE` once a fresh `RobotState` with a valid base shows a CoM speed below `rest_speed` for `rest_hold_sec`.
+	- Services (`std_srvs/srv/Trigger`) `/humanoid_walk_manager/walk`, `/rl_walk` and `/stop`; requests not allowed in the current state are refused. Walk/RL Walk send the configured goals (`walk_num_steps`, `rl_forward_speed`, `rl_duration`) to `/humanoid_walk/walk` or `/humanoid_rl_walk/rl_walk`; Stop cancels the goal. Only one goal runs at a time.
+	- Detects a fall from the base tilt (`fall_tilt`) or a CoM height below `fall_height_ratio` of the standing height recorded at the first `IDLE`; cancels a running walk and stays in `FALLEN` until the robot is upright again.
+	- Publishes the latched `/humanoid_walk_manager/state` (`humanoid_interfaces/msg/WalkManagerState`: state, `walk_enabled`, `rl_walk_enabled`, `stop_enabled`, message) on change and every `publish_period_sec`.
+	- Parameters in `config/walk_manager.yaml`. The rqt panel in `humanoid_ui` (`ros2 run humanoid_ui walk_manager_panel`) shows the state and enables only the allowed buttons.
+	- Headless trials (one run per backend): MuJoCo RL walk and stop returned to `IDLE`; the model-based walk fell in MuJoCo after Stop (detected as `FALLEN`). In Gazebo, walk and Stop worked, but the robot kept creeping in its final walk pose afterwards, so the manager stayed in `SETTLING` (see Known issues).
 - Foot force/torque sensing:
 	- `libgazebo_ros_ft_sensor.so` is attached to both ankle-pitch joints and publishes `/left_foot_ft` and `/right_foot_ft`. In MuJoCo, force/torque sensors at the foot bodies publish the same topics.
 	- These topics are consumed by `humanoid_estimator`, including when walking is idle or balance feedback is disabled.
@@ -522,6 +568,12 @@ Control and visualization nodes for startup and walking behavior.
   passing runs are reported as XPASS, and other exception types still fail normally.
   A future dedicated fix should address timer lifetime/queued callbacks and revalidate
   finite walking, cancellation, and the stop service.
+- **Robot creeps after a model-based walk in Gazebo:** after Stop, `humanoid_walk` holds its
+  final IK pose (hips/knees about 0.15-0.25 rad from the standing pose). In a headless Gazebo
+  trial the robot then slid steadily (about 0.1 m/s with velocity spikes) without any
+  trajectory command, so `humanoid_walk_manager` never saw it at rest and stayed in `SETTLING`
+  with Walk and RL Walk grayed out. Commanding the standing pose after a walk is not
+  implemented.
 
 ## Typical Workflow
 
