@@ -373,6 +373,8 @@ existing control and visualization nodes.
 	- Starts one `humanoid_estimator`, shared by walking and visualization.
 	- Starts `humanoid_walk` (`gait.yaml`), `humanoid_rl_walk` (`rl_walk.yaml`) and
 	  `humanoid_walk_manager` (`walk_manager.yaml`) with both backends.
+	  `humanoid_rl_walk`, `humanoid_walk_manager` and the panel run on wall time, not sim time,
+	  to avoid the CPU cost of the 1 kHz `/clock` (see Known issues).
 	- Starts the `humanoid_ui` walk manager panel unless `ui:=false` (default: `true`).
 	- Sets `humanoid_startup`'s `pose_tolerance` to 0.1 rad with MuJoCo (0.02 rad with Gazebo):
 	  the soft MuJoCo PD gains leave about 0.07 rad ankle error under load, so the standing pose
@@ -508,6 +510,7 @@ Control and visualization nodes for startup and walking behavior.
 	- Runs one policy step per `/humanoid_estimator/state` message (50 Hz = the policy's `ctrl_dt`). The observation mirrors the training environment: base-frame gyro and projected gravity (from the world-frame base pose and angular velocity), forward speed command, joint positions relative to the standing pose, joint velocities, last action and the gait clock (starting at phase 0 for every goal).
 	- Publishes `standing pose + action_scale * action`, clipped to the URDF limits, as a single-point trajectory with `time_from_start = target_time_from_start` (default 0: applied at once, like training).
 	- Action `/humanoid_rl_walk/rl_walk` (`humanoid_interfaces/action/RlWalk`): `forward_speed` (clamped to the trained range [0.05, 0.2] m/s with a warning) and `duration` (0 = until canceled). Feedback reports elapsed time, commanded and measured (CoM) forward speed and the gait phase. Cancel, the end of `duration` or `/humanoid_rl_walk/stop` command the standing pose at once.
+	- Times itself only from the `RobotState` stamps (stale sources are checked against the estimate stamp), so bringup runs it on wall time: a sim-time Python node spends about a third of a core on the 1 kHz `/clock`, which slowed Gazebo and made the model-based walk miss loop ticks and fall.
 	- Parameters in `config/rl_walk.yaml`; started by simulation bringup, or for custom compositions with `ros2 launch humanoid_control rl_walk.launch.py` (optional `policy_path:=...`).
 	- Headless MuJoCo trials (0.1-0.2 m/s, 8-10 s, plus cancel and stop): the robot walked forward without falling during the walk at about 0.6-0.8 of the commanded speed, with lateral and heading drift (the policy has no heading feedback; about 5-15 deg yaw per run). The abrupt switch to the standing pose causes 11-13 deg tilt transients; one of eight runs ended with the robot fallen (unmonitored, most likely at the switch).
 - `humanoid_walk_manager` (walk manager state machine, `tools/walk_manager.py`):
@@ -515,6 +518,7 @@ Control and visualization nodes for startup and walking behavior.
 	- Services (`std_srvs/srv/Trigger`) `/humanoid_walk_manager/walk`, `/rl_walk` and `/stop`; requests not allowed in the current state are refused. Walk/RL Walk send the configured goals (`walk_num_steps`, `rl_forward_speed`, `rl_duration`) to `/humanoid_walk/walk` or `/humanoid_rl_walk/rl_walk`; Stop cancels the goal. Only one goal runs at a time.
 	- Detects a fall from the base tilt (`fall_tilt`) or a CoM height below `fall_height_ratio` of the standing height recorded at the first `IDLE`; cancels a running walk and stays in `FALLEN` until the robot is upright again.
 	- Publishes the latched `/humanoid_walk_manager/state` (`humanoid_interfaces/msg/WalkManagerState`: state, `walk_enabled`, `rl_walk_enabled`, `stop_enabled`, message) on change and every `publish_period_sec`.
+	- Runs on wall time in bringup (no `/clock` subscription): state freshness (`state_timeout_sec`) is the wall age since reception, and rest timing uses the simulation stamps of `RobotState`.
 	- Parameters in `config/walk_manager.yaml`. The rqt panel in `humanoid_ui` (`ros2 run humanoid_ui walk_manager_panel`) shows the state and enables only the allowed buttons.
 	- Headless trials (one run per backend): MuJoCo RL walk and stop returned to `IDLE`; the model-based walk fell in MuJoCo after Stop (detected as `FALLEN`). In Gazebo, walk and Stop worked, but the robot kept creeping in its final walk pose afterwards, so the manager stayed in `SETTLING` (see Known issues).
 - Foot force/torque sensing:
@@ -574,6 +578,36 @@ Control and visualization nodes for startup and walking behavior.
   trajectory command, so `humanoid_walk_manager` never saw it at rest and stayed in `SETTLING`
   with Walk and RL Walk grayed out. Commanding the standing pose after a walk is not
   implemented.
+- **Model-based walk is sensitive to CPU load (sim-time `/clock` cost):** Gazebo publishes
+  `/clock` at 1000 Hz (`gazebo_params.yaml`, MuJoCo publishes it every step), and every Python
+  node with `use_sim_time:=true` receives all of it. On a 4-core test machine (with VS Code
+  running) each such node used about 30-40 % of a core even when idle. `humanoid_walk` runs its
+  loop with a sim-time rate (`update_rate_hz`, 50 Hz) but uses a fixed `dt = 1/update_rate_hz`
+  for balance and IK, so when the machine is overloaded it misses ticks and the gait falls.
+  After the walk manager was added, bringup also started `humanoid_rl_walk` and
+  `humanoid_walk_manager` on sim time. Gazebo's real-time factor dropped to about 0.4,
+  `humanoid_walk` published only 44-46 trajectories per sim second, and the walk fell within
+  the first steps in 3 of 4 headless trials. Waiting another 20 s at rest before the walk
+  did not help, so the falls were caused by the CPU load, not by starting too early.
+  - **Change:** bringup now runs `humanoid_rl_walk` and `humanoid_walk_manager` on wall time
+    (no `use_sim_time`, no `/clock` subscription). Both take their timing from the
+    `RobotState` stamps instead. `humanoid_rl_walk` steps the policy on the estimate stamps
+    and checks stale sources against the estimate stamp
+    (`warn_stale_state(..., now=...)` in `tools/state_messages.py`). The manager checks state
+    freshness (`state_timeout_sec`) with the wall-clock age since reception and times
+    `rest_hold_sec` with the `RobotState` stamps. The rqt panel already ran on wall time.
+    `rl_walk.launch.py` still defaults to `use_sim_time:=true` for standalone use.
+  - **Result:** the CPU use of `humanoid_rl_walk` dropped from about 38 % to 8 % and of the
+    manager from about 31 % to 7 %. Gazebo's real-time factor rose to about 0.52, and the
+    walk loop held 50 Hz. 4 of 5 headless Gazebo walks sent as soon as the manager reached
+    `IDLE` walked 15 s of sim time without falling. One fell after 12 s while the rate
+    dropped to 47 Hz. RL Walk through the manager still works in MuJoCo.
+  - **Remaining:** the walk still depends on spare CPU. `humanoid_startup` and
+    `humanoid_predefined_trajs` remain on sim time (about 35-47 % of a core each), and
+    `humanoid_estimator` and `humanoid_walk` need sim time. Close other heavy applications,
+    run headless (`gui:=false`) when validating, and check `ros2 topic hz
+    /effort_position_controller/joint_trajectory` (should be about 50 Hz of sim time) when
+    walks fail. Keep new helper nodes off sim time where possible.
 
 ## Typical Workflow
 

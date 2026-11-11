@@ -158,13 +158,15 @@ def generate_launch_description():
                     {'use_sim_time': use_sim_time}],
     )
 
+    # humanoid_rl_walk and the manager time themselves from the robot-state stamps and stay
+    # on wall time: a sim-time Python node spends ~1/3 core on the 1 kHz /clock topic, which
+    # slows the simulation and the model-based walk loop.
     humanoid_rl_walk = Node(
         package='humanoid_control',
         executable='humanoid_rl_walk',
         name='humanoid_rl_walk',
         output='screen',
-        parameters=[PathJoinSubstitution([control_config, 'rl_walk.yaml']),
-                    {'use_sim_time': use_sim_time}],
+        parameters=[PathJoinSubstitution([control_config, 'rl_walk.yaml'])],
     )
 
     humanoid_walk_manager = Node(
@@ -172,8 +174,7 @@ def generate_launch_description():
         executable='humanoid_walk_manager',
         name='humanoid_walk_manager',
         output='screen',
-        parameters=[PathJoinSubstitution([control_config, 'walk_manager.yaml']),
-                    {'use_sim_time': use_sim_time}],
+        parameters=[PathJoinSubstitution([control_config, 'walk_manager.yaml'])],
     )
 
     walk_manager_panel = Node(

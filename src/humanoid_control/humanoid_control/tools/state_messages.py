@@ -1,5 +1,7 @@
 """ROS message conversions for the shared measured robot state."""
 
+from typing import Optional
+
 import numpy as np
 import pinocchio as pin
 from geometry_msgs.msg import Point, Pose, Quaternion, Vector3
@@ -78,9 +80,18 @@ def message_to_estimate(msg: RobotState) -> RobotEstimate:
     )
 
 
-def warn_stale_state(node, msg: RobotState, timeout: float) -> None:
-    """Report stale sources while preserving the previous cached-measurement behavior."""
-    now = node.get_clock().now().nanoseconds * 1e-9
+def warn_stale_state(node, msg: RobotState, timeout: float,
+                     now: Optional[float] = None) -> None:
+    """Report stale sources while preserving the previous cached-measurement behavior.
+
+    Args:
+        node: Node whose clock and logger are used.
+        msg: Robot state to check.
+        timeout: Maximum source age [s].
+        now: Reference time [s] in the stamp time base; defaults to the node clock.
+    """
+    if now is None:
+        now = node.get_clock().now().nanoseconds * 1e-9
     sources = [('estimate', msg.header.stamp), ('joints', msg.joint_state.header.stamp)]
     if msg.base_valid:
         sources.append(('base', msg.base_stamp))

@@ -225,7 +225,8 @@ class HumanoidRlWalk(Node):
             if not msg.base_valid:
                 session.base_lost = True
                 return
-            warn_stale_state(self, msg, self.state_timeout)
+            # Runs on wall time (no 1 kHz /clock); check sources against the estimate stamp.
+            warn_stale_state(self, msg, self.state_timeout, now=now)
             index = {name: i for i, name in enumerate(msg.joint_state.name)}
             if any(name not in index for name in JOINT_NAMES) or \
                     len(msg.joint_state.velocity) != len(msg.joint_state.name):

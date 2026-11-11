@@ -73,6 +73,7 @@ class HumanoidWalkManager(Node):
 
         self.startup_ready = False
         self.latest_state: Optional[RobotState] = None
+        self.latest_state_received: Optional[Time] = None
         # Kind of the goal currently sent or running; at most one goal at a time.
         self.goal_kind: Optional[WalkKind] = None
         self.goal_handle = None
@@ -118,6 +119,7 @@ class HumanoidWalkManager(Node):
             msg: Robot state from humanoid_estimator.
         """
         self.latest_state = msg
+        self.latest_state_received = self.get_clock().now()
 
     def _observation(self) -> Optional[RobotObservation]:
         """Build the rest/fall observation from a fresh robot state.
@@ -128,7 +130,7 @@ class HumanoidWalkManager(Node):
         msg = self.latest_state
         if msg is None or not msg.base_valid:
             return None
-        age = (self.get_clock().now() - Time.from_msg(msg.header.stamp)).nanoseconds * 1e-9
+        age = (self.get_clock().now() - self.latest_state_received).nanoseconds * 1e-9
         if age > self.state_timeout:
             return None
         q = msg.base_pose.orientation
@@ -153,8 +155,12 @@ class HumanoidWalkManager(Node):
     # ------------------------------------------------------------------ main loop
     def _update(self) -> None:
         """Advance the state machine and publish the state."""
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if self.manager.update(now, self.startup_ready, self._observation()):
+        # The node runs on wall time to avoid the 1 kHz /clock subscription; rest timing
+        # uses the (simulation) stamp of the robot state instead.
+        obs = self._observation()
+        now = Time.from_msg(self.latest_state.header.stamp).nanoseconds * 1e-9 \
+            if obs is not None else 0.0
+        if self.manager.update(now, self.startup_ready, obs):
             self.get_logger().warn('Robot fell while walking: canceling the walk')
             self._cancel_goal()
         self._publish()
