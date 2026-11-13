@@ -251,7 +251,6 @@ def test_walk_action_finite_cancel_and_stop(ros_stack):
     walker = stack.walker
     walker.set_parameters([
         Parameter('step_time', value=0.25),
-        Parameter('hold_time', value=0.02),
         Parameter('init_time', value=0.1),
         Parameter('final_time', value=0.1),
         Parameter('stop_transition_time', value=0.1),

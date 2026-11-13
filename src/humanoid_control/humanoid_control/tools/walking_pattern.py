@@ -1,14 +1,12 @@
 """Walking pattern: combines the footstep plan, LIPM CoM and swing-foot trajectories.
 
 Timeline of a pattern (all times relative to the start of the pattern):
-  0. optional quasi-static lead-in (`shift_time` + `hold_time`): the CoM is moved slowly (quintic,
-     at rest at both ends) above the first stance foot and held there before anything else happens.
-  1. `pre` phase (`pre_time`): the CoM moves from its initial state to the state the plan needs at
+  0. `pre` phase (`pre_time`): the CoM moves from its initial state to the state the plan needs at
      the start of the first step, driven by one constant ZMP (exact LIPM solution). Feet stay put.
-  2. one segment of `step_time` per footstep. In the first `dsp_ratio` of the step (double
+  1. one segment of `step_time` per footstep. In the first `dsp_ratio` of the step (double
      support, swing foot on the ground) the ZMP moves linearly from the previous stance foot to the
      new stance foot; afterwards it stays at the stance foot while the swing foot moves.
-  3. (finite plans only) `final` phase (`final_time`): quintic CoM settling to the feet centre.
+  2. (finite plans only) `final` phase (`final_time`): quintic CoM settling to the feet centre.
 
 Everything is expressed in the plane frame (x forward, y left, z up).
 """
@@ -35,7 +33,7 @@ class WalkingReference:
     zmp: np.ndarray  # (2,)
     feet: Dict[str, np.ndarray]  # side -> (3,)
     feet_vel: Dict[str, np.ndarray]  # side -> (3,)
-    phase: str  # 'shift', 'hold', 'init', 'step' or 'final'
+    phase: str  # 'init', 'step' or 'final'
     step_index: int  # -1 outside of the step phase
     stance_side: Optional[str]
     swing_side: Optional[str]
@@ -65,7 +63,6 @@ class WalkingPattern:
         com_state: Optional[Tuple] = None,
         com_z: Optional[float] = None,
         pre_time: Optional[float] = None,
-        lead_in: bool = True,
     ) -> None:
         """Set up the pattern.
 
@@ -79,7 +76,6 @@ class WalkingPattern:
             com_z: Constant CoM height reference (z coordinate); defaults to
                 `params.com_height`.
             pre_time: Duration of the initial transition; defaults to `params.init_time`.
-            lead_in: Apply the quasi-static shift/hold above the first stance foot.
         """
         params.validate()
         self.params = params
@@ -98,19 +94,6 @@ class WalkingPattern:
         zero = np.zeros(2)
         self.com_state = tuple(np.asarray(x, float)
                                for x in com_state) if com_state else (mid, zero, zero)
-
-        self.shift_time = params.shift_time if lead_in else 0.0
-        self.hold_time = params.hold_time if lead_in and params.shift_time > 0.0 else 0.0
-        self.lead = self.shift_time + self.hold_time
-        self._lead_start = self.com_state
-        if self.shift_time > 0.0:
-            self._hold_com = self._zmp(planner.step(0))
-            if params.shift_lateral > 0.0:
-                dy = self._hold_com[1] - self.com_state[0][1]
-                self._hold_com = self._hold_com.copy()
-                self._hold_com[1] = self.com_state[0][1] + \
-                    float(np.clip(dy, -params.shift_lateral, params.shift_lateral))
-            self.com_state = (self._hold_com, zero, zero)
 
         self.step_time = params.step_time
         self.dsp_time = params.dsp_ratio * params.step_time
@@ -255,7 +238,7 @@ class WalkingPattern:
         """Total duration in seconds, or None for an endless walk."""
         if self.num_steps is None:
             return None
-        return self.lead + self.pre_time + self.num_steps * self.step_time + self.params.final_time
+        return self.pre_time + self.num_steps * self.step_time + self.params.final_time
 
     def step_start_time(self, k: int) -> float:
         """Compute the start time of step `k`.
@@ -266,7 +249,7 @@ class WalkingPattern:
         Returns:
             Time in seconds since the pattern start.
         """
-        return self.lead + self.pre_time + k * self.step_time
+        return self.pre_time + k * self.step_time
 
     def step_index_at(self, t: float) -> int:
         """Find the active step at time `t`.
@@ -277,7 +260,6 @@ class WalkingPattern:
         Returns:
             Step index; -1 in the initial phase, `num_steps` after the steps.
         """
-        t -= self.lead
         if t < self.pre_time:
             return -1
         k = int((t - self.pre_time) // self.step_time)
@@ -339,24 +321,6 @@ class WalkingPattern:
         step_index = -1
         stance_side = swing_side = None
         single_support = False
-
-        if t < self.lead:
-            phase = 'shift' if t < self.shift_time else 'hold'
-            c, v, a = lipm.quintic(
-                *self._lead_start, self._hold_com, np.zeros(2), np.zeros(2),
-                self.shift_time, min(t, self.shift_time),
-            )
-            zmp = c - a / self.w**2
-            first = self.planner.step(0)
-            xy = {first.stance_side: first.stance, first.swing_side: first.swing_start}
-            feet, feet_vel = self._resting_feet(xy['left'], xy['right'])
-            return WalkingReference(
-                t=t_abs, com=np.append(c, self.com_z), com_vel=np.append(v, 0.0),
-                zmp=np.asarray(zmp),
-                feet=feet, feet_vel=feet_vel, phase=phase, step_index=-1,
-                stance_side=None, swing_side=None,
-            )
-        t -= self.lead
 
         if t < self.pre_time:
             phase = 'init'
@@ -430,5 +394,5 @@ class WalkingPattern:
         return WalkingPattern(
             self.params, planner, feet['left'], feet['right'],
             com_state=(seg.c0, v0, a0), com_z=self.com_z,
-            pre_time=self.params.stop_transition_time, lead_in=False,
+            pre_time=self.params.stop_transition_time,
         )

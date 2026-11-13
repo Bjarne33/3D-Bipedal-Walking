@@ -18,14 +18,10 @@ def make_pattern(num_steps, **kw):
     return params, planner, WalkingPattern(params, planner, LEFT, RIGHT)
 
 
-def test_quasi_static_lead_in_holds_com_over_first_stance_foot():
-    params, planner, pat = make_pattern(2, shift_time=2.0, hold_time=1.0, zmp_offset_forward=0.05)
-    stance = planner.step(0).stance + np.array([0.05, 0.0])
-    ref = pat.sample(2.5)
-    assert ref.phase == 'hold'
-    assert np.allclose(ref.com[:2], stance) and np.allclose(ref.com_vel, 0.0)
-    assert pat.sample(0.5).phase == 'shift'
-    assert pat.step_start_time(0) == pytest.approx(3.0 + params.init_time)
+def test_pattern_starts_with_initial_lipm_transition():
+    params, _, pat = make_pattern(2)
+    assert pat.sample(0.0).phase == 'init'
+    assert pat.step_start_time(0) == pytest.approx(params.init_time)
     assert pat.sample(pat.step_start_time(0) + 0.01).phase == 'step'
 
 

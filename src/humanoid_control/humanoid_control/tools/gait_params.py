@@ -21,11 +21,6 @@ class GaitParams:
     # ZMP / CoM reference offset from the ankle frame (foot centre)
     zmp_offset_forward: float = 0.0
     init_time: float = 1.5  # CoM shift from the standing state onto the first stance foot
-    # quasi-static CoM shift above the first stance foot (0 disables the lead-in)
-    shift_time: float = 0.0
-    hold_time: float = 0.0  # pause above the first stance foot before the dynamic init phase
-    # max lateral CoM travel in the quasi-static shift (0 = full shift onto the foot)
-    shift_lateral: float = 0.0
     # lateral ZMP distance from the body midline during single support (0 = stance foot centre)
     zmp_lateral: float = 0.08
     final_time: float = 1.5  # CoM settling to the centre of the feet after the last step
@@ -75,8 +70,6 @@ class GaitParams:
             raise ValueError('step_width must be positive')
         if self.swing_height < 0.0 or self.step_length < 0.0:
             raise ValueError('swing_height and step_length must be non-negative')
-        if self.shift_time < 0.0 or self.hold_time < 0.0:
-            raise ValueError('shift_time and hold_time must be non-negative')
         if min(self.init_time, self.final_time, self.stop_transition_time) <= 0.0:
             raise ValueError('init_time, final_time and stop_transition_time must be positive')
         if self.lookahead_steps < 2:
