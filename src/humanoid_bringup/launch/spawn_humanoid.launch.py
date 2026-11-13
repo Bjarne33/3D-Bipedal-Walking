@@ -37,7 +37,7 @@ def generate_launch_description():
     visualization_arg = DeclareLaunchArgument(
         'visualization',
         default_value='false',
-        description='Launch RViz and the CoM visualizer',
+        description='Launch RViz',
     )
 
     ui_arg = DeclareLaunchArgument(
@@ -123,30 +123,6 @@ def generate_launch_description():
         }],
     )
 
-    com_visualizer = Node(
-        package='humanoid_control',
-        executable='com_visualizer',
-        condition=IfCondition(visualization),
-        name='com_visualizer',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time,
-            'world_frame': 'world',
-            'base_frame': 'base',
-            'publish_world_markers': True,
-        }],
-    )
-
-    humanoid_predefined_trajs = Node(
-        package='humanoid_control',
-        executable='humanoid_predefined_trajs',
-        name='humanoid_predefined_trajs',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time,
-        }],
-    )
-
     control_config = PathJoinSubstitution([FindPackageShare('humanoid_control'), 'config'])
 
     humanoid_walk = Node(
@@ -208,8 +184,6 @@ def generate_launch_description():
         rviz,
         humanoid_startup,
         humanoid_estimator,
-        com_visualizer,
-        humanoid_predefined_trajs,
         humanoid_walk,
         humanoid_rl_walk,
         humanoid_walk_manager,

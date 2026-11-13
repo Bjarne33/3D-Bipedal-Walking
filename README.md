@@ -6,11 +6,9 @@ It includes:
 
 - Robot description and simulation launch files.
 - Startup logic for controller readiness and initial pose.
-- A joint-space test node (`humanoid_predefined_trajs`) that executes predefined step sequences.
 - A model-based walking node (`humanoid_walk`) with closed-loop balance.
 - An RL walking node (`humanoid_rl_walk`) that deploys the trained policy
   (`humanoid_control/policies/policy.npz`) in the MuJoCo backend.
-- CoM visualization markers in base and world frames.
 - Floating joint-controller PD tuning with an rqt panel and PlotJuggler 4.
 - A learning-based walking controller (`rl/`, ROS-free) trained with curriculum reinforcement
   learning (Brax PPO on MuJoCo MJX); see [rl/README.md](rl/README.md).
@@ -132,13 +130,13 @@ source install/setup.bash
 ## 6) Run the project
 
 Start the simulation stack (simulator + robot spawn + controllers + control nodes).
-Gazebo is the default simulator. RViz and the CoM visualizer are disabled by default:
+Gazebo is the default simulator. RViz is disabled by default:
 
 ```bash
 ros2 launch humanoid_bringup spawn_humanoid.launch.py
 # Optional: use MuJoCo instead of Gazebo
 ros2 launch humanoid_bringup spawn_humanoid.launch.py simulator:=mujoco
-# Optional: launch RViz and the CoM visualizer
+# Optional: launch RViz
 ros2 launch humanoid_bringup spawn_humanoid.launch.py visualization:=true
 # Optional: pin the base in the air so the robot cannot fall (useful for inspecting motions)
 ros2 launch humanoid_bringup spawn_humanoid.launch.py floating:=true
@@ -176,13 +174,6 @@ Run URDF/RViz-only visualization (without Gazebo):
 
 ```bash
 ros2 launch humanoid_description humanoid_rviz.launch.py
-```
-
-Trigger the joint-space test motions:
-
-```bash
-ros2 service call /humanoid_predefined_trajs/step_once std_srvs/srv/Trigger {}
-ros2 service call /humanoid_predefined_trajs/step_n humanoid_interfaces/srv/StepN "{num_steps: 4}"   # n steps, alternating right/left
 ```
 
 The walking action servers can also be used directly; bringup already starts both nodes, so do
@@ -313,7 +304,7 @@ src/
   humanoid_gazebo/        Gazebo Classic model extensions, physics, controllers and launch
   humanoid_mujoco/        MuJoCo scene builder, ROS bridge node emulating the Gazebo interface, launch
   humanoid_description/   Simulator-independent Xacro model, RViz config and preview
-  humanoid_interfaces/    Actions, services, RobotState, BalanceState, WalkManagerState and
+  humanoid_interfaces/    Walking actions and RobotState, BalanceState, WalkManagerState and
                           JointTuningState messages
   humanoid_ui/            rqt walk manager panel (Stop / Walk / RL Walk)
   humanoid_tuning/        Floating PD experiments, rqt panel, native YAML export and PJ4 layouts
@@ -326,9 +317,8 @@ src/
     launch/rl_walk.launch.py Starts humanoid_rl_walk with rl_walk.yaml
     policies/policy.npz   Trained RL policy exported from rl/ (default of humanoid_rl_walk)
     humanoid_control/
-      nodes/              humanoid_startup, humanoid_predefined_trajs, humanoid_walk,
-                          humanoid_rl_walk, humanoid_estimator, com_visualizer,
-                          humanoid_walk_manager
+      nodes/              humanoid_startup, humanoid_walk, humanoid_rl_walk,
+                          humanoid_estimator, humanoid_walk_manager
       tools/              ROS-independent modules used by the nodes:
                             joints.py (joint order, standing pose), humanoid_kinematics.py (Pinocchio/Pink IK),
                             gait modules (footstep planner, LIPM/DCM, swing trajectory, walking pattern,
@@ -369,8 +359,8 @@ existing control and visualization nodes.
 	- Spawns the humanoid entity.
 	- Spawns `joint_state_broadcaster` and `effort_position_controller`.
 	- Starts control nodes from `humanoid_control`.
-	- Starts RViz and `com_visualizer` only when `visualization:=true` (default: `false`).
-	- Starts one `humanoid_estimator`, shared by walking and visualization.
+	- Starts RViz only when `visualization:=true` (default: `false`).
+	- Starts one `humanoid_estimator`, shared by the walking nodes.
 	- Starts `humanoid_walk` (`gait.yaml`), `humanoid_rl_walk` (`rl_walk.yaml`) and
 	  `humanoid_walk_manager` (`walk_manager.yaml`) with both backends.
 	  `humanoid_rl_walk`, `humanoid_walk_manager` and the panel run on wall time, not sim time,
@@ -446,8 +436,8 @@ MuJoCo integration; depends on the shared description, not on control or bringup
   kp 150-350, kd 4-10), much softer than the Gazebo gains, so that RL policies see their
   training dynamics. `humanoid_mujoco/model.py` likewise adds the training armature
   (0.02 kg m^2) to every actuated joint. With these gains the standing robot rests with about
-  4-5 deg forward tilt from the static ankle droop; `humanoid_walk` and the predefined motions were
-  tuned with the Gazebo gains and have not been revalidated in MuJoCo with them.
+  4-5 deg forward tilt from the static ankle droop; `humanoid_walk` was tuned with the Gazebo
+  gains and has not been revalidated in MuJoCo with them.
 - `worlds/world.xml`: MJCF world (1 ms time step, `implicitfast` integrator, ground plane,
   viewer start direction).
 
@@ -467,22 +457,17 @@ Simulator-independent robot model; does not depend on Gazebo, control or bringup
 
 ### `humanoid_control`
 
-Control and visualization nodes for startup and walking behavior.
+Control nodes for startup and walking behavior.
 
 - `humanoid_startup`:
 	- Waits for controllers to become active.
 	- Sends an initial standing pose to the trajectory controller.
 	- Handles pause/unpause sequencing for startup.
 	- Publishes the latched `/humanoid_startup/ready` (`std_msgs/Bool`), `true` once the standing pose is reached.
-- `humanoid_predefined_trajs` (joint-space test motions):
-	- Provides service `/humanoid_predefined_trajs/step_once`.
-	- Executes a single test step sequence with phases (shift, swing, place, settle).
-	- Provides service `/humanoid_predefined_trajs/step_n` (`humanoid_interfaces/srv/StepN`): repeats the test step `num_steps` times, alternating right and left foot (left steps are the mirrored right step).
-	- Publishes `JointTrajectory` commands to `effort_position_controller`.
 - `humanoid_estimator`:
 	- Owns `/odom`, `/joint_states`, `/left_foot_ft`, and `/right_foot_ft` subscriptions.
 	- Reconstructs world-frame CoM/velocity, foot poses, loaded-foot support points and measured ZMP using a private Pinocchio state. Base pose/twist are simulator ground truth (Gazebo p3d or MuJoCo), not sensor-fused odometry; both backends express pose and twist in `world`.
-	- Publishes `/humanoid_estimator/state` (`humanoid_interfaces/msg/RobotState`) at 50 Hz. The message includes source timestamps, measured joint states, base-frame CoM, contact/force information and ZMP validity. Without base odometry, `base_valid=false`: only joint states and base-frame CoM are valid, preserving base-only visualization and open-loop walking.
+	- Publishes `/humanoid_estimator/state` (`humanoid_interfaces/msg/RobotState`) at 50 Hz. The message includes source timestamps, measured joint states, base-frame CoM, contact/force information and ZMP validity. Without base odometry, `base_valid=false`: only joint states and base-frame CoM are valid, preserving open-loop walking.
 	- Averages ankle wrenches over each estimator period (nominally the same 50 Hz as walking). Loaded-foot threshold remains 30 N; absent wrench data still uses the sole-height contact fallback.
 	- Broadcasts dynamic `world -> base` TF using the odometry source timestamp. With `floating:=true`, bringup disables this broadcaster because `robot_state_publisher` supplies the fixed transform. The RViz-only preview retains its static publisher.
 	- Parameters formerly owned by the walker (`odom_topic`, `left_ft_topic`, `right_ft_topic`, `ground_height`, `contact_tolerance`) now live in `config/estimator.yaml`. Keep its `ankle_to_sole` aligned with `gait.yaml`, and its `update_rate_hz` aligned with the walking rate when preserving the nominal averaging window.
@@ -524,11 +509,6 @@ Control and visualization nodes for startup and walking behavior.
 - Foot force/torque sensing:
 	- `libgazebo_ros_ft_sensor.so` is attached to both ankle-pitch joints and publishes `/left_foot_ft` and `/right_foot_ft`. In MuJoCo, force/torque sensors at the foot bodies publish the same topics.
 	- These topics are consumed by `humanoid_estimator`, including when walking is idle or balance feedback is disabled.
-- `com_visualizer`:
-	- Consumes `/humanoid_estimator/state`; no longer owns a robot model or raw sensor subscriptions.
-	- Publishes the same base-frame CoM markers and ground projection on `/com_marker`, and optional world-frame markers on `/com_world_marker`.
-	- Does not broadcast TF. The old `model_states_topic`, `model_name`, and `publish_world_to_base_tf` visualizer parameters are removed; TF configuration belongs to the estimator.
-
 ## Known issues
 
 - **MuJoCo viewer ignores mouse and keyboard on Wayland:** on a Wayland session (for example
@@ -602,8 +582,8 @@ Control and visualization nodes for startup and walking behavior.
     walk loop held 50 Hz. 4 of 5 headless Gazebo walks sent as soon as the manager reached
     `IDLE` walked 15 s of sim time without falling. One fell after 12 s while the rate
     dropped to 47 Hz. RL Walk through the manager still works in MuJoCo.
-  - **Remaining:** the walk still depends on spare CPU. `humanoid_startup` and
-    `humanoid_predefined_trajs` remain on sim time (about 35-47 % of a core each), and
+  - **Remaining:** the walk still depends on spare CPU. `humanoid_startup` remains on sim time
+    (about 35-47 % of a core), and
     `humanoid_estimator` and `humanoid_walk` need sim time. Close other heavy applications,
     run headless (`gui:=false`) when validating, and check `ros2 topic hz
     /effort_position_controller/joint_trajectory` (should be about 50 Hz of sim time) when

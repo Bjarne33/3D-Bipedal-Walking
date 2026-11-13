@@ -21,9 +21,7 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from tf2_msgs.msg import TFMessage
 from trajectory_msgs.msg import JointTrajectory
-from visualization_msgs.msg import Marker
 
-from humanoid_control.nodes.com_visualizer import CoMVisualizer
 from humanoid_control.nodes.humanoid_estimator import HumanoidEstimator
 from humanoid_control.nodes.humanoid_walk import HumanoidWalk
 from humanoid_control.tools.humanoid_kinematics import HumanoidKinematics
@@ -137,22 +135,18 @@ def test_stale_warning_checks_sources_not_just_publication_time():
 
 @pytest.fixture
 def ros_stack():
-    """Run the estimator, walker and visualizer with synthetic stamped sensor topics."""
+    """Run the estimator and walker with synthetic stamped sensor topics."""
     rclpy.init()
     estimator = HumanoidEstimator()
     walker = HumanoidWalk()
-    visualizer = CoMVisualizer()
     probe = Node('estimator_test_probe')
     executor = MultiThreadedExecutor(num_threads=4)
-    nodes = (estimator, walker, visualizer, probe)
+    nodes = (estimator, walker, probe)
     for node in nodes:
         executor.add_node(node)
-    states, transforms, base_markers, world_markers, trajectories, balances = (
-        [] for _ in range(6))
+    states, transforms, trajectories, balances = ([] for _ in range(4))
     probe.create_subscription(RobotState, '/humanoid_estimator/state', states.append, 10)
     probe.create_subscription(TFMessage, '/tf', transforms.append, 10)
-    probe.create_subscription(Marker, '/com_marker', base_markers.append, 100)
-    probe.create_subscription(Marker, '/com_world_marker', world_markers.append, 100)
     probe.create_subscription(
         JointTrajectory, '/effort_position_controller/joint_trajectory', trajectories.append, 10)
     probe.create_subscription(BalanceState, '/humanoid_walk/balance_state', balances.append, 10)
@@ -199,9 +193,8 @@ def ros_stack():
 
     try:
         yield SimpleNamespace(
-            estimator=estimator, walker=walker, visualizer=visualizer, probe=probe,
+            estimator=estimator, walker=walker, probe=probe,
             inputs=inputs, base=base, states=states, transforms=transforms,
-            base_markers=base_markers, world_markers=world_markers,
             trajectories=trajectories, balances=balances, wait=wait)
     finally:
         executor.shutdown(timeout_sec=10.0)
@@ -210,11 +203,10 @@ def ros_stack():
         rclpy.shutdown()
 
 
-def test_ros_transport_tf_markers_and_single_sensor_owner(ros_stack):
-    """Verify actual ROS publication, consumers, marker IDs and TF pose/timestamp."""
+def test_ros_transport_tf_and_single_sensor_owner(ros_stack):
+    """Verify actual ROS publication, consumers and TF pose/timestamp."""
     stack = ros_stack
-    stack.wait(lambda: stack.states and stack.transforms
-               and len(stack.base_markers) >= 3 and len(stack.world_markers) >= 3)
+    stack.wait(lambda: stack.states and stack.transforms)
     state = stack.states[-1]
     assert state.base_valid and state.zmp_valid
     assert state.left_contact and not state.right_contact
@@ -226,12 +218,6 @@ def test_ros_transport_tf_markers_and_single_sensor_owner(ros_stack):
     assert transform.header.frame_id == 'world' and transform.child_frame_id == 'base'
     assert transform.header.stamp.sec > 0
     np.testing.assert_allclose(xyz(transform.transform.translation), stack.base.translation)
-    assert {m.id for m in stack.base_markers} == {0, 1, 2}
-    assert {m.id for m in stack.world_markers} == {100, 101, 102}
-    base_sphere = next(m for m in reversed(stack.base_markers) if m.id == 0)
-    world_sphere = next(m for m in reversed(stack.world_markers) if m.id == 100)
-    np.testing.assert_allclose(xyz(base_sphere.pose.position), xyz(state.com_base))
-    np.testing.assert_allclose(xyz(world_sphere.pose.position), xyz(state.com))
     for topic in ('/odom', '/joint_states', '/left_foot_ft', '/right_foot_ft'):
         subscribers = stack.probe.get_subscriptions_info_by_topic(topic)
         assert {info.node_name for info in subscribers} == {'humanoid_estimator'}
@@ -240,19 +226,17 @@ def test_ros_transport_tf_markers_and_single_sensor_owner(ros_stack):
 
 
 def test_base_only_state_and_disabled_tf(ros_stack):
-    """Preserve base-only markers and walking readiness without base odometry."""
+    """Preserve base-only estimation and walking readiness without base odometry."""
     stack = ros_stack
     stack.inputs.base = False
     stack.inputs.wrenches = False
     stack.estimator.publish_tf = False
-    stack.wait(lambda: stack.states and len(stack.base_markers) >= 3
-               and stack.walker._have_all_joints())
+    stack.wait(lambda: stack.states and stack.walker._have_all_joints())
     assert not stack.states[-1].base_valid
     assert not stack.states[-1].zmp_valid
-    assert not stack.world_markers
     assert not stack.transforms
     stack.inputs.base = True
-    stack.wait(lambda: stack.states[-1].base_valid and stack.world_markers)
+    stack.wait(lambda: stack.states[-1].base_valid)
     assert not stack.transforms  # pinned mode still measures state but never duplicates base TF
 
 

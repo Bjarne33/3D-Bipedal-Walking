@@ -17,16 +17,6 @@ Visualization Manager:
     - Class: rviz_default_plugins/TF
       Name: TF
       Value: true
-    - Class: rviz_default_plugins/Marker
-      Topic:
-        Value: /com_marker
-      Name: CoM Base Marker
-      Value: true
-    - Class: rviz_default_plugins/Marker
-      Topic:
-        Value: /com_world_marker
-      Name: CoM World Marker
-      Value: true
   Global Options:
     Fixed Frame: world
   Tools:
