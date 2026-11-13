@@ -2,7 +2,7 @@ humanoid_walk:
   ros__parameters:
     controller_name: effort_position_controller
     update_rate_hz: 50.0
-    ik_iterations: 2
+    ik_iterations: 2  # Number of IK steps per control cycle; must be at least 1.
     trajectory_lead_sec: 0.06
     first_swing: right
     forward_axis: [0.0, 1.0, 0.0]  # base-frame walking direction
