@@ -1,1 +1,1 @@
-"""ROS 2 nodes: startup, predefined trajectories, model-based walking and CoM visualization."""
+"""ROS 2 nodes for startup, estimation, and model-based and RL walking."""

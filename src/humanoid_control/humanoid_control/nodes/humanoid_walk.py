@@ -39,7 +39,11 @@ class HumanoidWalk(Node):
     """Model-based walking node exposing the walk action and stop service."""
 
     def __init__(self) -> None:
-        """Declare gait parameters, load the model and create the action, services and I/O."""
+        """Declare gait parameters, load the model and create the action, services and I/O.
+
+        Raises:
+            ValueError: If ik_iterations or state_timeout_sec is not positive.
+        """
         super().__init__('humanoid_walk')
 
         self.declare_parameter('controller_name', 'effort_position_controller')
@@ -63,6 +67,8 @@ class HumanoidWalk(Node):
 
         self.rate_hz = float(self.get_parameter('update_rate_hz').value)
         self.ik_iterations = int(self.get_parameter('ik_iterations').value)
+        if self.ik_iterations < 1:
+            raise ValueError('ik_iterations must be at least 1')
         self.lead = float(self.get_parameter('trajectory_lead_sec').value)
 
         self.ankle_to_sole = float(self.get_parameter('ankle_to_sole').value)
@@ -393,10 +399,10 @@ class HumanoidWalk(Node):
                 s: pin.SE3(rotations[s], frame.to_base(ref_feet[s])) for s in ('left', 'right')
             }
             com_target = frame.to_base(com_plane)
-            for _ in range(self.ik_iterations):
-                q = kin.compute_ik_step(
-                    frames['left'], poses['left'], frames['right'], poses['right'], com_target, dt
-                )
+            q = kin.inverse_kinematics(
+                frames['left'], poses['left'], frames['right'], poses['right'], com_target,
+                dt=dt, iterations=self.ik_iterations,
+            )
             q_cmd = self._apply_joint_offsets(q, joint_maps, out) if out is not None else q
             self._publish_joints(q_cmd, q_prev)
             q_prev = q_cmd.copy()

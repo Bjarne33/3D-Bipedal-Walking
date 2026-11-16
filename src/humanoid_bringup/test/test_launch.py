@@ -46,10 +46,10 @@ def test_launch_description():
         if value is not None:
             context.launch_configurations['visualization'] = value
         arguments['visualization'].execute(context)
-        for executable in ('rviz2', 'com_visualizer'):
+        for executable in ('rviz2',):
             assert nodes[executable].condition.evaluate(context) == (value == 'true')
         for executable, node in nodes.items():
-            if executable not in ('rviz2', 'com_visualizer', 'walk_manager_panel'):
+            if executable not in ('rviz2', 'walk_manager_panel'):
                 assert node.condition is None
     for value in (None, 'false', 'true'):
         context = LaunchContext()
@@ -117,8 +117,6 @@ def test_launch_dependencies():
     assert sorted(nodes) == sorted([
         ('humanoid_control', 'humanoid_startup'),
         ('humanoid_control', 'humanoid_estimator'),
-        ('humanoid_control', 'com_visualizer'),
-        ('humanoid_control', 'humanoid_predefined_trajs'),
         ('humanoid_control', 'humanoid_walk'),
         ('humanoid_control', 'humanoid_rl_walk'),
         ('humanoid_control', 'humanoid_walk_manager'),

@@ -11,13 +11,16 @@ Google Colab tier), with a three-phase reward curriculum:
 | 2 | Weight shifting and foot clearance | step in place following the gait clock | 0 |
 | 3 | Low-speed locomotion | walk forward following a speed command | U(0.05, 0.2) m/s |
 
-The package is ROS-free (`COLCON_IGNORE`) and is not built by `colcon`. Policies are evaluated in
-MuJoCo and exported as NumPy `.npz`; there is no ROS deployment node yet.
+The training package is ROS-free (`COLCON_IGNORE`) and is not built by `colcon`. Policies are
+evaluated in MuJoCo and exported as NumPy `.npz`. The ROS deployment node is in
+`src/humanoid_control`: it loads the checked-in `src/humanoid_control/policies/policy.npz` and
+publishes commands for the MuJoCo backend using NumPy only.
 
-**Status:** the pipeline is implemented and tested locally on CPU (environment, rewards, domain
-randomization, curriculum driver, evaluation, export). No policy has been trained yet; reward
-weights, thresholds and PPO settings are literature-based starting points, see the
-[tuning checklist](#tuning-checklist).
+**Status:** the training pipeline is implemented and tested locally on CPU (environment, rewards,
+domain randomization, curriculum driver, evaluation, export), and a deployable policy export is
+included in the ROS package. Reward weights, thresholds, PPO settings, and observed walking
+performance are separate concerns; see the [tuning checklist](#tuning-checklist) and the system
+guide's validation notes.
 
 ## Layout
 
